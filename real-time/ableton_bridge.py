@@ -125,7 +125,7 @@ class FeedbackManager:
         self.datastore = datastore
         self.lock = threading.Lock()
         self.current_episode_id: Optional[str] = None
-        self.waiting_for_commit: bool = False
+        self.draft_pending: bool = False
         self.latest_grade: Optional[int] = None
         self.coherence: Optional[float] = None
         self.repetition: Optional[float] = None
@@ -134,7 +134,7 @@ class FeedbackManager:
 
     def record_generation(self, prompt_bytes: bytes, output_bytes: bytes, params: Dict, mode: str) -> Optional[str]:
         with self.lock:
-            if self.waiting_for_commit:
+            if self.draft_pending:
                 logger.warning("Feedback episode already pending commit; skipping new episode.")
                 return None
             enriched = dict(params)
@@ -148,7 +148,8 @@ class FeedbackManager:
             )
             episode_id = self.datastore.create_episode(prompt_bytes, output_bytes, enriched, mode=mode)
             self.current_episode_id = episode_id
-            self.waiting_for_commit = True
+            self.draft_pending = True
+            logger.info(f"[feedback] draft_pending -> True ({episode_id})")
             return episode_id
 
     def set_grade(self, grade: int):
@@ -172,9 +173,6 @@ class FeedbackManager:
 
     def commit(self):
         with self.lock:
-            if not self.waiting_for_commit or not self.current_episode_id:
-                logger.info("No pending feedback episode to commit.")
-                return
             grade = self.latest_grade if self.latest_grade is not None else 0
             feedback = {
                 "coherence": self.coherence,
@@ -182,10 +180,23 @@ class FeedbackManager:
                 "taste": self.taste,
                 "continuity": self.continuity,
             }
-            self.datastore.finalize_episode(self.current_episode_id, grade, feedback=feedback)
-            logger.info(f"Feedback episode {self.current_episode_id} finalized with grade={grade}.")
+
+            episode_id = self.current_episode_id if (self.draft_pending and self.current_episode_id) else None
+
+            if episode_id is None:
+                logger.warning("Commit requested without draft_pending; checking for recent uncommitted episode.")
+                episode_id = self.datastore.find_most_recent_draft_episode()
+
+                if episode_id is None:
+                    logger.warning("No pending feedback episode to commit.")
+                    return
+
+                logger.warning(f"Recovered recent uncommitted feedback episode: {episode_id}")
+
+            self.datastore.finalize_episode(episode_id, grade, feedback=feedback)
+            logger.info(f"Feedback episode {episode_id} finalized with grade={grade}.")
             self.current_episode_id = None
-            self.waiting_for_commit = False
+            self.draft_pending = False
             self.latest_grade = None
 
 

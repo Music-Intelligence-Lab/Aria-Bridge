@@ -8,9 +8,9 @@ class SamplingState:
 
     def __init__(self, temperature: float, top_p: float, min_p: float | None):
         self._lock = threading.Lock()
-        self.temperature = temperature
-        self.top_p = top_p
-        self.min_p = 0.0 if min_p is None else min_p
+        self.temperature = round(temperature, 2)
+        self.top_p = round(top_p, 2)
+        self.min_p = round(0.0 if min_p is None else min_p, 2)
 
     # --- helpers ---
     def _clamp(self, val, lo, hi):
@@ -18,32 +18,32 @@ class SamplingState:
 
     def increase_temperature(self):
         with self._lock:
-            self.temperature = self._clamp(self.temperature + 0.05, 0.1, 2.0)
+            self.temperature = round(self._clamp(self.temperature + 0.05, 0.1, 2.0), 2)
             return self.temperature
 
     def decrease_temperature(self):
         with self._lock:
-            self.temperature = self._clamp(self.temperature - 0.05, 0.1, 2.0)
+            self.temperature = round(self._clamp(self.temperature - 0.05, 0.1, 2.0), 2)
             return self.temperature
 
     def increase_top_p(self):
         with self._lock:
-            self.top_p = self._clamp(self.top_p + 0.01, 0.1, 1.0)
+            self.top_p = round(self._clamp(self.top_p + 0.01, 0.1, 1.0), 2)
             return self.top_p
 
     def decrease_top_p(self):
         with self._lock:
-            self.top_p = self._clamp(self.top_p - 0.01, 0.1, 1.0)
+            self.top_p = round(self._clamp(self.top_p - 0.01, 0.1, 1.0), 2)
             return self.top_p
 
     def increase_min_p(self):
         with self._lock:
-            self.min_p = self._clamp(self.min_p + 0.01, 0.0, 0.2)
+            self.min_p = round(self._clamp(self.min_p + 0.01, 0.0, 0.2), 2)
             return self.min_p
 
     def decrease_min_p(self):
         with self._lock:
-            self.min_p = self._clamp(self.min_p - 0.01, 0.0, 0.2)
+            self.min_p = round(self._clamp(self.min_p - 0.01, 0.0, 0.2), 2)
             return self.min_p
 
     def get_values(self):
@@ -53,17 +53,17 @@ class SamplingState:
     # direct setters (used by OSC)
     def set_temperature(self, v: float):
         with self._lock:
-            self.temperature = self._clamp(v, 0.1, 2.0)
+            self.temperature = round(self._clamp(v, 0.1, 2.0), 2)
             return self.temperature
 
     def set_top_p(self, v: float):
         with self._lock:
-            self.top_p = self._clamp(v, 0.1, 1.0)
+            self.top_p = round(self._clamp(v, 0.1, 1.0), 2)
             return self.top_p
 
     def set_min_p(self, v: float):
         with self._lock:
-            self.min_p = self._clamp(v, 0.0, 0.2)
+            self.min_p = round(self._clamp(v, 0.0, 0.2), 2)
             return self.min_p
 
 

@@ -455,7 +455,6 @@ class ManualModeSession:
         )
         gen_time = time.time() - gen_start
         logger.info(f"[manual] Generation finished in {gen_time:.2f}s")
-        self._capture_feedback(prompt_midi_path, generated_path, temp, top_p, min_p, tokens)
         if self.session_state:
             self.session_state.set_status("PLAYING")
         if self.osc_status_cb:
@@ -469,6 +468,8 @@ class ManualModeSession:
             if self.osc_status_cb:
                 self.osc_status_cb("IDLE")
             return
+
+        self._capture_feedback(prompt_midi_path, generated_path, temp, top_p, min_p, tokens)
 
         if self.play_gate:
             self.pending_output_path = generated_path

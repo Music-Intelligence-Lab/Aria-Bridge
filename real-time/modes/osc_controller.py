@@ -317,7 +317,7 @@ class OscController:
             self.grade_cb(grade)
 
     def _handle_commit(self, addr, *args):
-        flag = 0
+        flag = 1
         if args:
             try:
                 flag = int(float(args[0]))
@@ -331,39 +331,39 @@ class OscController:
             logger.info("[OSC] commit ignored (flag not set)")
 
     def _handle_temp(self, addr, *args):
-        logger.info(f"Received /aria/temp: {args[0] if args else 'None'}")
         if not args:
             return
         try:
-            v = float(args[0])
+            v = round(float(args[0]), 2)
         except Exception:
             return
+        logger.info(f"Received /aria/temp: {v:.2f}")
         self.sampling_state.set_temperature(v)
         self._record_startup_value("temp", v)
         self.send_params()
         self.send_log(f"Temp -> {self.sampling_state.get_values()[0]:.2f}")
 
     def _handle_top_p(self, addr, *args):
-        logger.info(f"Received /aria/top_p: {args[0] if args else 'None'}")
         if not args:
             return
         try:
-            v = float(args[0])
+            v = round(float(args[0]), 2)
         except Exception:
             return
+        logger.info(f"Received /aria/top_p: {v:.2f}")
         self.sampling_state.set_top_p(v)
         self._record_startup_value("top_p", v)
         self.send_params()
         self.send_log(f"Top_p -> {self.sampling_state.get_values()[1]:.2f}")
 
     def _handle_min_p(self, addr, *args):
-        logger.info(f"Received /aria/min_p: {args[0] if args else 'None'}")
         if not args:
             return
         try:
-            v = float(args[0])
+            v = round(float(args[0]), 2)
         except Exception:
             return
+        logger.info(f"Received /aria/min_p: {v:.2f}")
         self.sampling_state.set_min_p(v)
         self._record_startup_value("min_p", v)
         self.send_params()

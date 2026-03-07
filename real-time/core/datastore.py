@@ -249,3 +249,16 @@ class DataStore:
             meta["continuity"] = feedback.get("continuity")
         self._atomic_write_json(meta_path, meta)
         self._update_index_row(episode_id, "final", int(grade), feedback=feedback)
+
+    def find_most_recent_draft_episode(self) -> Optional[str]:
+        if not self.index_path.exists():
+            return None
+
+        with self.index_path.open("r", newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+
+        for row in reversed(rows[1:]):
+            if row and len(row) >= 3 and row[2] == "draft":
+                return row[0]
+
+        return None
