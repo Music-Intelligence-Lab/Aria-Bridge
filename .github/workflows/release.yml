@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-plugin:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CMake and Ninja
+        shell: powershell
+        run: |
+          choco install cmake ninja -y
+
+      - name: Configure JUCE standalone build
+        working-directory: real-time/Plugin
+        shell: powershell
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build standalone target
+        working-directory: real-time/Plugin
+        shell: powershell
+        run: |
+          cmake --build build --config Release --target AriaBridge_Standalone
+
+      - name: Stage standalone executable
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          $exe = Get-ChildItem -Path "real-time/Plugin/build" -Recurse -Filter "Aria Bridge.exe" |
+            Where-Object { $_.FullName -like "*Standalone*" } |
+            Select-Object -First 1
+          if (-not $exe) {
+            throw "Standalone executable not found in build output."
+          }
+          Copy-Item $exe.FullName -Destination "staging/Aria Bridge.exe" -Force
+
+      - name: Upload standalone artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria-bridge-standalone-exe
+          path: staging/Aria Bridge.exe
+
+  package:
+    runs-on: windows-latest
+    needs: build-plugin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download standalone artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aria-bridge-standalone-exe
+          path: staging
+
+      - name: Create release folder structure
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "staging\models" | Out-Null
+          New-Item -ItemType Directory -Force -Path "staging\backend" | Out-Null
+
+          Copy-Item "install.bat" "staging\install.bat" -Force
+          Copy-Item "start.bat" "staging\start.bat" -Force
+          Copy-Item "README.md" "staging\README.md" -Force
+
+          Set-Content -Path "staging\models\PUT_MODEL_HERE.txt" -Value "Download model-gen.safetensors from https://huggingface.co/eleutherai/aria and place it in this folder."
+
+          Get-ChildItem "real-time" -Force |
+            Where-Object { $_.Name -notin @("Plugin", "build", "__pycache__") } |
+            ForEach-Object {
+              Copy-Item $_.FullName -Destination "staging\backend" -Recurse -Force
+            }
+
+      - name: Create release zip
+        shell: powershell
+        run: |
+          $zipName = "aria-bridge-windows-${{ github.ref_name }}.zip"
+          if (Test-Path $zipName) {
+            Remove-Item $zipName -Force
+          }
+          Compress-Archive -Path "staging\*" -DestinationPath $zipName
+
+      - name: Upload release zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria-bridge-release-zip
+          path: aria-bridge-windows-${{ github.ref_name }}.zip
+
+  release:
+    runs-on: windows-latest
+    needs: package
+
+    steps:
+      - name: Download release zip artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aria-bridge-release-zip
+          path: .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: aria-bridge-windows-${{ github.ref_name }}.zip
+          body: See README.md for installation instructions.
