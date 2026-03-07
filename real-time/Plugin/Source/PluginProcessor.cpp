@@ -240,6 +240,7 @@ AriaBridgeAudioProcessor::AriaBridgeAudioProcessor()
     oscReceiverThread = std::make_unique<OSCReceiverThread>(*this);
     oscReceiverThread->startThread();
     startTimer(2000);
+    launchBackendProcessIfNeeded();
     startStandaloneMidiInputs();
 }
 
@@ -249,6 +250,7 @@ AriaBridgeAudioProcessor::~AriaBridgeAudioProcessor()
     cancelPendingUpdate();
     activeEditor = nullptr;
     stopStandaloneMidiInputs();
+    backendProcess.kill();
 
     if (oscReceiverThread != nullptr)
     {
@@ -632,6 +634,35 @@ void AriaBridgeAudioProcessor::handleMidiControllerMessage(const juce::MidiMessa
 
     if (shouldTrigger)
         triggerAsyncUpdate();
+}
+
+void AriaBridgeAudioProcessor::launchBackendProcessIfNeeded()
+{
+    if (wrapperType != wrapperType_Standalone)
+        return;
+
+    juce::File exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
+    juce::File launcherScript = exeDir.getChildFile("start.bat");
+
+    if (! launcherScript.existsAsFile())
+    {
+        {
+            const juce::ScopedLock lock(oscStateLock);
+            currentStatus = "ERROR: start.bat not found next to exe";
+        }
+
+        triggerAsyncUpdate();
+        return;
+    }
+
+    {
+        const juce::ScopedLock lock(oscStateLock);
+        lastLog = "Launching backend: " + launcherScript.getFullPathName();
+    }
+
+    juce::String command = "cmd.exe /c \"" + launcherScript.getFullPathName() + "\"";
+    backendProcess.start(command);
+    triggerAsyncUpdate();
 }
 
 void AriaBridgeAudioProcessor::startStandaloneMidiInputs()

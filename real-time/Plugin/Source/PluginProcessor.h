@@ -84,6 +84,7 @@ private:
     void handleIncomingOSCMessage(const void* data, size_t sizeInBytes);
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
     void handleMidiControllerMessage(const juce::MidiMessage& message);
+    void launchBackendProcessIfNeeded();
     void startStandaloneMidiInputs();
     void stopStandaloneMidiInputs();
 
@@ -104,6 +105,7 @@ private:
     std::vector<std::unique_ptr<juce::MidiInput>> standaloneMidiInputs;
 
     juce::DatagramSocket oscSenderSocket;
+    juce::ChildProcess backendProcess;
     std::unique_ptr<OSCReceiverThread> oscReceiverThread;
     AriaBridgeAudioProcessorEditor* activeEditor = nullptr;
 };
