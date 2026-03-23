@@ -20,13 +20,7 @@ if not exist "%~dp0models\model-gen.safetensors" (
 )
 
 "%~dp0venv\Scripts\python.exe" ableton_bridge.py ^
-  --mode manual ^
-  --m4l ^
+  plugin ^
   --feedback ^
   --data-dir "%~dp0data" ^
-  --osc-host 127.0.0.1 ^
-  --osc-in-port 9000 ^
-  --osc-out-port 9001 ^
-  --in ARIA_IN ^
-  --out ARIA_OUT ^
   --checkpoint "%~dp0models\model-gen.safetensors"

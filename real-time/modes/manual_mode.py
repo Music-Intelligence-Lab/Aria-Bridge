@@ -170,11 +170,26 @@ class ManualModeSession:
                 return int(val)
         return self.max_new_tokens
 
+    @staticmethod
+    def _resolve_port(name: str, kind: str) -> str:
+        """Return the exact port name, falling back to prefix match (handles 'ARIA_IN 0', etc.)."""
+        import mido
+        available = mido.get_input_names() if kind == "input" else mido.get_output_names()
+        if name in available:
+            return name
+        matched = [p for p in available if p.startswith(name)]
+        if matched:
+            logger.info(f"Port '{name}' not found exactly; using '{matched[0]}'")
+            return matched[0]
+        return name  # let mido raise the real error with the original name
+
     def _open_ports(self) -> None:
         import mido
-        self.in_port = mido.open_input(self.in_port_name)
-        self.out_port = mido.open_output(self.out_port_name)
-        logger.info(f"Manual mode ports opened: IN={self.in_port_name}, OUT={self.out_port_name}")
+        in_name = self._resolve_port(self.in_port_name, "input")
+        out_name = self._resolve_port(self.out_port_name, "output")
+        self.in_port = mido.open_input(in_name)
+        self.out_port = mido.open_output(out_name)
+        logger.info(f"Manual mode ports opened: IN={in_name}, OUT={out_name}")
 
     def _close_ports(self) -> None:
         try:

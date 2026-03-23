@@ -2,18 +2,20 @@
 """
 Real-time Ableton bridge for Aria.
 
-Reads live MIDI from loopMIDI port "ARIA_IN" and sends generated continuations
-to "ARIA_OUT", synchronized to Ableton's MIDI clock.
+Usage (preset):
+    python ableton_bridge.py plugin    --checkpoint <path>  # JUCE plugin / Max for Live
+    python ableton_bridge.py m4l       --checkpoint <path>  # Max for Live device
+    python ableton_bridge.py automatic --checkpoint <path>  # Clock-sync auto-generation
+    python ableton_bridge.py manual    --checkpoint <path>  # Keyboard-driven, no OSC
 
-Usage:
-    python ableton_bridge.py --in ARIA_IN --out ARIA_OUT [--options]
-    # Manual, keyboard-triggered recording (no Ableton clock required):
-    python ableton_bridge.py --mode manual --manual-key r --in ARIA_IN --out ARIA_OUT
+Usage (explicit flags, still supported):
+    python ableton_bridge.py --mode manual --m4l --in ARIA_IN --out ARIA_OUT --checkpoint <path>
 """
 
 import argparse
 import logging
 import os
+import platform
 import sys
 import threading
 import queue
@@ -24,6 +26,41 @@ try:
     from core.datastore import DataStore
 except ImportError:  # Package import path
     from .core.datastore import DataStore
+
+# ---------------------------------------------------------------------------
+# Launch presets — each maps a short name to a set of argument defaults.
+# Explicit CLI flags always override preset defaults.
+# ---------------------------------------------------------------------------
+PRESETS: dict = {
+    # JUCE plugin standalone: manual recording, OSC control plane enabled.
+    "plugin": {"mode": "manual", "m4l": True},
+    # Max for Live device: same OSC-driven workflow as plugin.
+    "m4l":    {"mode": "manual", "m4l": True},
+    # Clock-sync: generation triggered automatically by Ableton MIDI clock.
+    "automatic": {"mode": "clock"},
+    # Keyboard-only: no OSC, start/stop via keyboard keys.
+    "manual": {"mode": "manual"},
+}
+
+def _auto_detect_device() -> str:
+    """Return the best available inference device: cuda > mlx > cpu."""
+    # Apple Silicon — prefer MLX
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        try:
+            import mlx.core  # noqa: F401
+            return "mlx"
+        except ImportError:
+            pass
+        return "cpu"
+    # NVIDIA GPU — prefer CUDA
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
+
 
 # Logging
 logging.basicConfig(
@@ -207,6 +244,15 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument(
+        "preset",
+        nargs="?",
+        choices=list(PRESETS),
+        default=None,
+        metavar="PRESET",
+        help="Launch preset: plugin | m4l | automatic | manual. "
+             "Sets sensible defaults; individual flags still override.",
+    )
+    parser.add_argument(
         "--in",
         dest="in_port",
         default="ARIA_IN",
@@ -303,9 +349,10 @@ def main():
     )
     parser.add_argument(
         "--device",
-        default="cuda",
-        choices=["cuda", "cpu"],
-        help="Device for model inference (default: cuda)",
+        default=None,
+        choices=["cuda", "mlx", "cpu"],
+        help="Device for model inference: cuda (NVIDIA), mlx (Apple Silicon), cpu. "
+             "Auto-detected if omitted.",
     )
     parser.add_argument(
         "--list-ports",
@@ -384,6 +431,11 @@ def main():
         default=None,
         help="External directory for storing feedback dataset",
     )
+
+    # Apply preset defaults before full parse so explicit flags can still override.
+    preset_name = next((a for a in sys.argv[1:] if a in PRESETS), None)
+    if preset_name:
+        parser.set_defaults(**PRESETS[preset_name])
 
     args = parser.parse_args()
 
@@ -471,13 +523,26 @@ def main():
             if startup_state:
                 logger.info(f"OSC params after startup sync: {startup_state}")
 
-        # Verify CUDA if needed (after OSC server is alive)
+        # Resolve device (auto-detect if not specified)
+        if args.device is None:
+            args.device = _auto_detect_device()
+            logger.info(f"Auto-detected device: {args.device}")
+
         if args.device == "cuda":
             import torch
             if not torch.cuda.is_available():
-                logger.error("CUDA requested but not available. Use --device cpu")
+                logger.error("CUDA requested but not available. Use --device mlx (Apple Silicon) or --device cpu")
                 return 1
             logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
+        elif args.device == "mlx":
+            try:
+                import mlx.core  # noqa: F401
+            except ImportError:
+                logger.error("MLX requested but not installed. Run: pip install mlx")
+                return 1
+            logger.info("MLX backend (Apple Silicon)")
+        else:
+            logger.info("CPU device (inference will be slow)")
 
         checkpoint_path = find_checkpoint(args.checkpoint)
 

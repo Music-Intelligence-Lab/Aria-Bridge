@@ -27,6 +27,7 @@ train = ["accelerate"]
 real-time = [
     "mido>=1.3.0",
     "python-rtmidi>=1.4.9",
+    "python-osc>=1.8.0",
 ]
 
 eval = [

@@ -27,7 +27,7 @@ class AriaEngine:
 
         Args:
             checkpoint_path: Path to .safetensors checkpoint
-            device: 'cuda' or 'cpu' (use cuda for real-time)
+            device: 'cuda', 'mlx' (Apple Silicon), or 'cpu'
             config_name: Model config name (e.g., 'medium', 'large')
         """
         self.checkpoint_path = checkpoint_path
@@ -46,8 +46,6 @@ class AriaEngine:
     def _load_model(self) -> None:
         """Load model and tokenizer from checkpoint."""
         try:
-            from safetensors.torch import load_file
-            from aria.inference.model_cuda import TransformerLM
             from aria.model import ModelConfig
             from aria.config import load_model_config
             from ariautils.tokenizer import AbsTokenizer
@@ -57,30 +55,35 @@ class AriaEngine:
                 "Ensure aria is installed and in PYTHONPATH."
             )
 
-        # Detect dtype
-        self.dtype = (
-            torch.bfloat16
-            if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-            else torch.float16
-        )
-
-        # Load config and model
         try:
             model_config = ModelConfig(**load_model_config(name=self.config_name))
             model_config.set_vocab_size(AbsTokenizer().vocab_size)
-            self.model = TransformerLM(model_config)
-
-            state_dict = load_file(filename=self.checkpoint_path)
-            self.model.load_state_dict(state_dict=state_dict, strict=False)
-            self.model = self.model.to(self.device)
-            self.model.eval()
-
             self.tokenizer = AbsTokenizer()
+
+            if self.device == "mlx":
+                import mlx.core as mx
+                from aria.inference.model_mlx import TransformerLM
+                self.model = TransformerLM(model_config)
+                self.model.load_weights(self.checkpoint_path, strict=False)
+                mx.eval(self.model.parameters())
+                self.dtype = None  # MLX manages its own dtypes
+            else:
+                from safetensors.torch import load_file
+                from aria.inference.model_cuda import TransformerLM
+                self.dtype = (
+                    torch.bfloat16
+                    if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+                    else torch.float32
+                )
+                self.model = TransformerLM(model_config)
+                state_dict = load_file(filename=self.checkpoint_path)
+                self.model.load_state_dict(state_dict=state_dict, strict=False)
+                self.model = self.model.to(self.device)
+                self.model.eval()
 
             logger.debug(
                 f"Model loaded: {self.model.__class__.__name__}, "
-                f"vocab_size={model_config.vocab_size}, "
-                f"dtype={self.dtype}"
+                f"device={self.device}, vocab_size={model_config.vocab_size}"
             )
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
@@ -113,7 +116,6 @@ class AriaEngine:
         """
         try:
             from aria.inference import get_inference_prompt
-            from aria.inference.sample_cuda import sample_batch
             from ariautils.midi import MidiDict
 
             # Get and tokenize prompt
@@ -124,12 +126,7 @@ class AriaEngine:
                 prompt_len_ms=int(1e3 * prompt_duration_s),
             )
 
-            # Estimate tokens for horizon:
-            # Aria typically generates ~0.5-1 token/ms at 0.6s = 600ms
-            # Conservative: 1 token/ms => 600 tokens for 0.6s, but we cap it smaller
             if max_new_tokens is None:
-                # Very conservative for low-latency: ~2-4 tokens per 100ms
-                # User-requested upper cap bumped from 128 -> 512
                 max_new_tokens = min(512, int(horizon_s * 200))
 
             max_new_tokens = min(8096 - len(prompt), max_new_tokens)
@@ -143,9 +140,10 @@ class AriaEngine:
                 f"max_new_tokens={max_new_tokens}, temp={temperature}, top_p={top_p}"
             )
 
-            # Sample
+            # Sample — route to the correct backend
             start_time = time.time()
-            with torch.inference_mode():
+            if self.device == "mlx":
+                from aria.inference.sample_mlx import sample_batch
                 results = sample_batch(
                     model=self.model,
                     tokenizer=self.tokenizer,
@@ -156,8 +154,22 @@ class AriaEngine:
                     force_end=False,
                     top_p=top_p,
                     min_p=min_p,
-                    compile=False,
                 )
+            else:
+                from aria.inference.sample_cuda import sample_batch
+                with torch.inference_mode():
+                    results = sample_batch(
+                        model=self.model,
+                        tokenizer=self.tokenizer,
+                        prompt=prompt,
+                        num_variations=1,
+                        max_new_tokens=max_new_tokens,
+                        temp=temperature,
+                        force_end=False,
+                        top_p=top_p,
+                        min_p=min_p,
+                        compile=False,
+                    )
 
             gen_time = time.time() - start_time
             logger.debug(f"Generation took {gen_time:.2f}s, produced {len(results[0])} tokens")

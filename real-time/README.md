@@ -1,555 +1,383 @@
 # Aria Real-Time Bridge
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-Real-time MIDI generation with the Aria music model—featuring **3 operational modes** to fit your workflow: **Clock-Synchronized**, **Manual Keyboard**, or **Max for Live**.
-
-## Overview
-
-The Aria Real-Time Bridge creates a live MIDI pipeline between Ableton Live (via loopMIDI) and the Aria deep learning model. Record a musical prompt, and the model instantly generates a continuation, which you can play back in sync with your track.
-
-> **Aria Model**: A state-of-the-art music language model trained on symbolic MIDI data. For details, see [Aria GitHub](https://github.com/EleutherAI/aria).
+Real-time MIDI generation with the [Aria](https://github.com/EleutherAI/aria) music model. Record a musical prompt in Ableton Live, and the model instantly generates a continuation via virtual MIDI ports.
 
 ---
 
-## Table of Contents
+## Quick Start
 
-1. [Installation](#installation)
-2. [Three Operating Modes](#three-operating-modes)
-   - [Option 1: Clock Mode](#option-1-clock-mode-ableton-synchronized)
-   - [Option 2: Manual Mode](#option-2-manual-mode-keyboard-driven)
-   - [Option 3: Manual + OSC / Max for Live](#option-3-manual-with-osc--max-for-live)
-3. [CLI Reference](#cli-reference)
-4. [Project Structure](#project-structure)
-5. [Troubleshooting](#troubleshooting)
-6. [Development](#development)
+### 1. Install prerequisites
 
----
+<details>
+<summary><strong>Windows</strong></summary>
 
-## Installation
+1. **Python 3.11** — [python.org](https://www.python.org/downloads/) (check "Add Python to PATH")
+2. **loopMIDI** — [download](https://www.tobias-erichsen.de/software/loopmidi.html), then create two ports: `ARIA_IN` and `ARIA_OUT`
+3. **PyTorch** — GPU (recommended): `pip install torch --index-url https://download.pytorch.org/whl/cu121` · CPU only: `pip install torch`
+4. **Aria package + bridge dependencies** — run both from the repo root:
+   ```
+   pip install -e ".[real-time]"
+   cd real-time && pip install -r requirements.txt
+   ```
+   - `pip install -e ".[real-time]"` installs the Aria model code (`aria/inference/`, `aria/model.py`, etc.) plus MIDI deps.
+   - `pip install -r requirements.txt` adds any remaining bridge-specific packages.
 
-### Prerequisites
+</details>
 
-- **Python 3.9+**
-- **PyTorch 2.0+** (CUDA-enabled recommended for real-time performance)
-- **mido** for MIDI I/O
-- **loopMIDI** or equivalent virtual MIDI port software
-- **Aria model checkpoint** (`.safetensors` format) – download separately
+<details>
+<summary><strong>macOS</strong></summary>
 
-### Setup
+1. **Python 3.11** — `brew install python@3.11` or [python.org](https://www.python.org/downloads/)
+2. **Virtual MIDI ports** — Open **Audio MIDI Setup → Window → Show MIDI Studio → IAC Driver**, enable it, add ports `ARIA_IN` and `ARIA_OUT`
+3. **Xcode CLI tools** — `xcode-select --install`
+4. **PyTorch** — Apple Silicon: `pip install torch` · Intel: `pip install torch`
+5. **Aria package + bridge dependencies** — run both from the repo root:
+   ```bash
+   pip install -e ".[real-time]"
+   cd real-time && pip install -r requirements.txt
+   ```
+   - `pip install -e ".[real-time]"` installs the Aria model code plus MIDI deps.
+   - `pip install -r requirements.txt` adds any remaining packages, including `mlx` automatically on Apple Silicon.
+
+</details>
+
+### 2. Download the model
+
+Get `model-gen.safetensors` from [Hugging Face](https://huggingface.co/EleutherAI/aria) and note the path — you pass it as `--checkpoint` every time.
+
+### 3. Verify
 
 ```bash
-# Clone the repository
-git clone <repo-url>
-cd aria/real-time
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Verify MIDI ports are available
 python ableton_bridge.py --list-ports
 ```
 
-### Download Model Checkpoint
-
-The Aria model is not included in the repository. Download the checkpoint file:
-
-1. Get `model-gen.safetensors` from [Aria releases](https://huggingface.co/EleutherAI/aria) or your local copy.
-2. Place it in a known location (e.g., `../models/model-gen.safetensors` relative to this folder, or absolute path).
-3. Provide the path when running the bridge (see examples below).
+You should see `ARIA_IN` and `ARIA_OUT` in the output.
 
 ---
 
-## Three Operating Modes
+## Choose Your Workflow
 
-### Option 1: Clock Mode (Ableton-Synchronized)
+Pick the preset that matches your setup. Click for full instructions.
 
-**Best for**: Live improvisation in Ableton with automatic, beat-locked generation.
-
-In this mode, the bridge listens to **Ableton's MIDI clock** and synchronizes generation to measure boundaries. When you play a specified number of human measures, the model automatically generates a continuation and plays it back in perfect sync.
-
-#### How It Works
-
-1. Set up **two loopMIDI ports**: `ARIA_IN` (receives human input) and `ARIA_OUT` (sends generated MIDI).
-2. Configure Ableton to send MIDI clock to `ARIA_CLOCK`.
-3. Play your human pattern into `ARIA_IN` for the specified number of measures (default: 1).
-4. Bridge detects the boundary and triggers generation.
-5. Generated output plays automatically back to `ARIA_OUT`.
-
-#### Script to Run
-
-```bash
-# Provide path to your checkpoint (relative or absolute)
-python ableton_bridge.py \
-  --mode clock \
-  --checkpoint ../models/model-gen.safetensors \
-  --in ARIA_IN \
-  --out ARIA_OUT \
-  --clock_in ARIA_CLOCK
-```
-
-Or with an absolute path:
-
-```bash
-python ableton_bridge.py \
-  --mode clock \
-  --checkpoint /full/path/to/model-gen.safetensors \
-  --in ARIA_IN \
-  --out ARIA_OUT \
-  --clock_in ARIA_CLOCK
-```
-
-#### Clock Mode CLI Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `--mode` | `clock` / `manual` | `clock` | Operating mode |
-| `--in` | `str` | `ARIA_IN` | Input MIDI port (human performance) |
-| `--out` | `str` | `ARIA_OUT` | Output MIDI port (generated MIDI) |
-| `--clock_in` | `str` | `ARIA_CLOCK` | MIDI clock input port (synchronized to Ableton tempo) |
-| `--checkpoint` | `str` | *required* | Path to Aria `.safetensors` checkpoint (relative or absolute) |
-| `--measures` | `int` | `2` | Number of measures per block (human + AI cycle) |
-| `--beats_per_bar` | `int` | `4` | Time signature numerator (e.g., 4 for 4/4) |
-| `--human_measures` | `int` | `1` | Number of human-played measures before generation triggers |
-| `--gen_measures` | `int` | (same as `--measures`) | Number of measures for AI to generate |
-| `--temperature` | `float` | `0.9` | Sampling temperature (0.1–2.0, higher = more random) |
-| `--top_p` | `float` | `0.95` | Top-p (nucleus) sampling threshold (0.1–1.0) |
-| `--min_p` | `float` | `None` | Minimum-p sampling (alternative threshold) |
-| `--quantize` | flag | off | Quantize output to 1/16 note grid |
-| `--device` | `cuda` / `cpu` | `cuda` | Inference device |
-| `--list-ports` | flag | — | List available MIDI ports and exit |
-
-#### Example: 4/4 Time, 2-Bar Blocks
-
-```bash
-python ableton_bridge.py \
-  --mode clock \
-  --checkpoint ../models/model-gen.safetensors \
-  --in ARIA_IN \
-  --out ARIA_OUT \
-  --clock_in ARIA_CLOCK \
-  --measures 2 \
-  --beats_per_bar 4 \
-  --human_measures 1 \
-  --gen_measures 2 \
-  --temperature 0.8 \
-  --top_p 0.95
-```
-
-#### Live Keyboard Tweaks (Clock Mode)
-
-While running, press these keys in the terminal for real-time sampling adjustments:
-
-| Key | Action |
-|-----|--------|
-| `1` | Decrease temperature |
-| `2` | Increase temperature |
-| `3` | Decrease top-p |
-| `4` | Increase top-p |
-| `5` | Decrease min-p |
-| `6` | Increase min-p |
+| Preset | What it does | Best for |
+|--------|-------------|----------|
+| [**plugin**](#plugin) | OSC-controlled, manual trigger | JUCE standalone plugin |
+| [**m4l**](#m4l) | OSC-controlled via Max for Live device | Ableton + Max for Live |
+| [**automatic**](#automatic) | Syncs to Ableton's MIDI clock, auto-generates at bar boundaries | Hands-free jamming |
+| [**manual**](#manual) | Keyboard-driven, no extras | Quick testing / no Ableton |
 
 ---
 
-### Option 2: Manual Mode (Keyboard-Driven)
-
-**Best for**: Offline, step-by-step recording and generation without Ableton clock.
-
-In this mode, you use your **keyboard** to start/stop recording. No MIDI clock is needed; the bridge timestamps each MIDI message and infers BPM from note onsets.
-
-#### How It Works
-
-1. Press the **record key** (default: `r`) to start capturing MIDI.
-2. Play your musical idea into `ARIA_IN`.
-3. Press the record key again to stop.
-4. Bridge infers BPM, generates a continuation.
-5. Press the **play key** (default: `p`) to hear the generated output.
-
-#### Script to Run
+### plugin
 
 ```bash
-python ableton_bridge.py \
-  --mode manual \
-  --checkpoint ../models/model-gen.safetensors \
-  --in ARIA_IN \
-  --out ARIA_OUT
+python ableton_bridge.py plugin --checkpoint <path-to-checkpoint>
 ```
 
-#### Manual Mode CLI Options
+Uses OSC for control from a JUCE standalone plugin. Mode is `manual` with OSC enabled.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `--mode` | `clock` / `manual` | — | **Must be** `manual` |
-| `--in` | `str` | `ARIA_IN` | Input MIDI port |
-| `--out` | `str` | `ARIA_OUT` | Output MIDI port |
-| `--checkpoint` | `str` | *required* | Path to Aria `.safetensors` checkpoint (relative or absolute) |
-| `--manual-key` | `str` | `r` | Keyboard key to toggle recording (start/stop) |
-| `--play-key` | `str` | `p` | Keyboard key to trigger playback (optional) |
-| `--max-seconds` | `float` | `None` | Maximum recording duration in seconds (safety limit) |
-| `--max-bars` | `int` | `None` | Maximum recording duration in bars (requires BPM inference) |
-| `--beats_per_bar` | `int` | `4` | Time signature numerator for max-bars calculation |
-| `--gen_seconds` | `float` | `1.0` | Duration of generated continuation (seconds) |
-| `--temperature` | `float` | `0.9` | Sampling temperature |
-| `--top_p` | `float` | `0.95` | Top-p sampling threshold |
-| `--min_p` | `float` | `None` | Minimum-p sampling |
-| `--max-new-tokens` | `int` | `None` | Token budget override (auto-computed if omitted) |
-| `--device` | `cuda` / `cpu` | `cuda` | Inference device |
-| `--list-ports` | flag | — | List available MIDI ports and exit |
-
-#### Example: Custom Keys & Time Limit
+<details>
+<summary>With feedback collection</summary>
 
 ```bash
-python ableton_bridge.py \
-  --mode manual \
-  --checkpoint ../models/model-gen.safetensors \
-  --in ARIA_IN \
-  --out ARIA_OUT \
-  --manual-key r \
-  --play-key p \
-  --max-seconds 10 \
-  --gen_seconds 2.0 \
+python ableton_bridge.py plugin --checkpoint <path> --feedback --data-dir ./data
+```
+
+</details>
+
+---
+
+### m4l
+
+```bash
+python ableton_bridge.py m4l --checkpoint <path-to-checkpoint>
+```
+
+<details>
+<summary><strong>Full setup walkthrough (Windows)</strong></summary>
+
+**What you need:** [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html), Ableton Live with Max for Live, the device file `real-time/ableton/Aria Bridge.amxd`.
+
+**Step 1 — loopMIDI ports**
+Open loopMIDI, add two ports: `ARIA_IN` and `ARIA_OUT`.
+
+**Step 2 — Ableton**
+1. **Preferences → MIDI**: enable `ARIA_IN` and `ARIA_OUT` (Track + Remote on both).
+2. Create a **MIDI track** for your instrument. Set its MIDI output to `ARIA_IN`.
+3. Create a second **MIDI track** for generated output. Set its MIDI input to `ARIA_OUT` and arm it.
+4. Drag `Aria Bridge.amxd` onto any MIDI track.
+
+**Step 3 — Start the bridge**
+
+```bash
+python ableton_bridge.py m4l --checkpoint <path-to-checkpoint>
+```
+
+You should see `OSC server listening on 127.0.0.1:9000`. The M4L device status will show **IDLE**.
+
+**Step 4 — M4L device controls**
+
+| Control | Action |
+|---------|--------|
+| **Record** | Start/stop capturing MIDI input |
+| **Play** | Send generated MIDI to `ARIA_OUT` |
+| **Cancel** | Discard current recording |
+| **Temp / Top-p / Min-p** knobs | Adjust sampling parameters live |
+| **Tokens** knob | Generation token budget (0–2048) |
+
+</details>
+
+<details>
+<summary>With feedback collection</summary>
+
+```bash
+python ableton_bridge.py m4l --checkpoint <path> --feedback --data-dir ./data
+```
+
+</details>
+
+---
+
+### automatic
+
+```bash
+python ableton_bridge.py automatic --checkpoint <path-to-checkpoint>
+```
+
+Listens to Ableton's MIDI clock on `ARIA_CLOCK` and triggers generation at bar boundaries. Requires a third loopMIDI port named `ARIA_CLOCK`.
+
+<details>
+<summary>Custom bar/measure options</summary>
+
+```bash
+python ableton_bridge.py automatic \
+  --checkpoint <path> \
+  --human_measures 2 \
+  --gen_measures 4 \
   --temperature 0.85
 ```
 
-#### Terminal Keyboard Tweaks (Manual Mode)
-
-Same hotkeys as Clock Mode:
-
-| Key | Action |
-|-----|--------|
-| `1/2` | Decrease/Increase temperature |
-| `3/4` | Decrease/Increase top-p |
-| `5/6` | Decrease/Increase min-p |
+</details>
 
 ---
 
-### Option 3: Manual with OSC / Max for Live
-
-**Best for**: Integration with Max for Live for hardware control or sophisticated UI workflows.
-
-This mode combines **manual keyboard control with OSC (Open Sound Control)** for remote parameter adjustment via Max for Live devices or any OSC client.
-
-#### How It Works
-
-1. Run the bridge in **manual mode with OSC enabled**.
-2. Load the included **Max for Live device** (`Live Max knobs.amxd`) into Ableton.
-3. The device sends OSC messages to control:
-   - `record` start/stop
-   - `temperature`, `top_p`, `min_p` parameters
-   - `tokens` (0–2048) max generation tokens
-   - `play` output triggering
-4. Receive real-time status and log messages back to Max.
-
-> **Max patch note (odot):** Use `o.udpreceive 9001` (odot) instead of vanilla `udpreceive` so `/aria/get_state` is parsed as a FullPacket. If you keep `udpreceive`, insert `o.fromosc` before `o.route /aria/get_state`.
-
-#### Script to Run
+### manual
 
 ```bash
-python ableton_bridge.py \
-  --mode manual \
-  --checkpoint ../models/model-gen.safetensors \
-  --m4l \
-  --osc-host 127.0.0.1 \
-  --osc-in-port 9000 \
-  --osc-out-port 9001 \
-  --in ARIA_IN \
-  --out ARIA_OUT
+python ableton_bridge.py manual --checkpoint <path-to-checkpoint>
 ```
 
-With **feedback data collection** enabled:
-
-```bash
-python ableton_bridge.py \
-  --mode manual \
-  --checkpoint ../models/model-gen.safetensors \
-  --m4l \
-  --feedback \
-  --data-dir ./data \
-  --osc-host 127.0.0.1 \
-  --osc-in-port 9000 \
-  --osc-out-port 9001 \
-  --in ARIA_IN \
-  --out ARIA_OUT
-```
-
-#### Manual + OSC CLI Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `--mode` | `clock` / `manual` | — | **Must be** `manual` |
-| `--checkpoint` | `str` | *required* | Path to Aria `.safetensors` checkpoint (relative or absolute) |
-| `--m4l` | flag | off | Enable OSC server for Max for Live |
-| `--osc-host` | `str` | `127.0.0.1` | OSC server host (localhost for local use) |
-| `--osc-in-port` | `int` | `9000` | UDP port to listen for incoming OSC commands |
-| `--osc-out-port` | `int` | `9001` | UDP port to send status/parameter updates |
-| `--in` | `str` | `ARIA_IN` | Input MIDI port |
-| `--out` | `str` | `ARIA_OUT` | Output MIDI port |
-| `--feedback` | flag | off | Enable feedback dataset collection (requires `--data-dir`) |
-| `--data-dir` | `str` | — | Directory for storing feedback data (relative or absolute path) |
-| `--manual-key` | `str` | `r` | Keyboard key (still available as backup) |
-| `--play-key` | `str` | `p` | Keyboard play key (still available) |
-| `--max-seconds`, `--max-bars`, `--gen_seconds`, `--temperature`, `--top_p`, `--min_p`, `--device` | — | — | Same as Manual Mode |
-
-#### OSC Message Reference
-
-**Incoming (from Max/Client → Bridge)**:
-
-| Address | Payload | Purpose |
-|---------|---------|---------|
-| `/aria/record` | `1` or `0` | Start (`1`) or stop (`0`) recording + generate |
-| `/aria/temp` | `float` 0.1–2.0 | Set sampling temperature |
-| `/aria/top_p` | `float` 0.1–1.0 | Set top-p threshold |
-| `/aria/min_p` | `float` 0.0–0.2 | Set min-p threshold |
-| `/aria/tokens` | `int` 0–2048 | Set `max_new_tokens` generation budget |
-| `/aria/play` | — | Trigger playback of last generation |
-| `/aria/cancel` | — | Cancel current recording |
-| `/aria/ping` | — | Request status snapshot |
-
-**Outgoing (from Bridge → Max/Client)**:
-
-| Address | Payload | Purpose |
-|---------|---------|---------|
-| `/aria/status` | `string` | Current status (e.g., "RECORDING", "GENERATING", "IDLE") |
-| `/aria/params` | `[temp, top_p, min_p]` | Current sampling parameters |
-| `/aria/log` | `string` | Event log message (e.g., "Recording started") |
-
-#### Example: Max for Live Integration
-
-1. **Open Ableton** and set up your MIDI tracks.
-2. (Optional) **Load the included device**: If you have `aria.als` (Ableton Live Set) and `Live Max knobs.amxd` (Max for Live device), drag the device into an empty MIDI track.
-3. **Run the bridge with checkpoint path**:
-   ```bash
-   python ableton_bridge.py \
-     --mode manual \
-     --checkpoint /path/to/model-gen.safetensors \
-     --m4l \
-     --in ARIA_IN \
-     --out ARIA_OUT
-   ```
-4. **Interact**: Use the Max device sliders and buttons to control generation, or use OSC from any client.
-
-### Feedback & Data Collection
-
-The bridge includes a **feedback dataset collection system** for recording generations and human ratings to improve the model.
-
-#### How It Works
-
-1. Run the bridge with `--feedback --data-dir <path>` flags.
-2. Each generation is stored with:
-   - Input prompt MIDI (`prompt.mid`)
-   - Generated output MIDI (`output.mid`)
-   - Metadata (timestamp, parameters, status)
-   - CSV index for quick lookups
-3. After generation, use OSC (`/aria/grade <score>`) to rate the output (0–5 stars).
-4. Data is organized by date and episode ID in `<data-dir>/episodes/`.
-
-#### Example: Enable Feedback Collection
-
-```bash
-python ableton_bridge.py \
-  --mode manual \
-  --checkpoint ../models/model-gen.safetensors \
-  --m4l \
-  --feedback \
-  --data-dir ./feedback_data \
-  --in ARIA_IN \
-  --out ARIA_OUT
-```
-
-**Data Directory Structure**:
-```
-feedback_data/
-├── index.csv                    # Master index of all episodes
-└── episodes/
-    ├── 2026-02-25/
-    │   ├── 20260225_102030_a1b2c3/
-    │   │   ├── meta.json        # Episode metadata
-    │   │   ├── prompt.mid       # Input MIDI
-    │   │   └── output.mid       # Generated MIDI
-```
-
-The `--data-dir` can be a local folder or an external path. This is useful for:
-- **Offline review**: Load MIDI files into your DAW later.
-- **Model training**: Collect diverse examples with human feedback.
-- **Audit trail**: Track all generations with timestamps and parameters.
-
-#### Optional: Tkinter UI Panel
-
-You can also enable a simple Tkinter control panel alongside any mode:
-
-```bash
-python ableton_bridge.py --mode manual --ui --in ARIA_IN --out ARIA_OUT
-```
+Keyboard-driven, no OSC. Press `r` to toggle recording, `p` to trigger playback.
 
 ---
 
 ## CLI Reference
 
-### Global Options
+<details>
+<summary><strong>All flags</strong></summary>
 
 ```
---checkpoint <path>   Path to Aria model checkpoint (REQUIRED - specify with relative or absolute path)
---device {cuda,cpu}   Inference device (default: cuda)
---list-ports          List available MIDI ports and exit
---help, -h            Show help message
+python ableton_bridge.py [PRESET] [OPTIONS]
 ```
 
-### Mode Selection
+**MIDI ports**
 
-```
---mode {clock,manual}  Operating mode (default: clock)
-```
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--in` | `ARIA_IN` | Input port (human performance) |
+| `--out` | `ARIA_OUT` | Output port (generated MIDI) |
+| `--clock_in` | `ARIA_CLOCK` | Clock input (clock mode only) |
 
----
+**Sampling**
 
-## Project Structure
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--temperature` | `0.9` | Sampling temperature (0.1–2.0) |
+| `--top_p` | `0.95` | Top-p nucleus sampling (0.1–1.0) |
+| `--min_p` | `None` | Min-p sampling threshold |
+| `--max-new-tokens` | `None` | Token budget override |
 
-```
-real-time/
-├── ableton_bridge.py       # Main entry point
-├── requirements.txt        # Python dependencies
-├── README.md              # This file
-├── core/
-│   ├── __init__.py
-│   ├── aria_engine.py      # Aria model inference wrapper
-│   ├── bridge_engine.py    # Core orchestration (MIDI I/O + generation)
-│   ├── midi_buffer.py      # Rolling MIDI message buffer
-│   ├── prompt_midi.py      # Buffer-to-MIDI conversion
-│   ├── sampling_state.py   # Thread-safe parameter state
-│   ├── tempo_tracker.py    # MIDI clock tempo tracking
-│   └── datastore.py        # Feedback dataset storage & indexing
-├── modes/
-│   ├── __init__.py
-│   ├── clock_mode.py       # Clock grid synchronization (from clock_grid.py)
-│   ├── manual_mode.py      # Keyboard-driven manual mode
-│   ├── osc_controller.py   # OSC server for Max for Live
-│   └── sampling_hotkeys.py # Live keyboard parameter tweaks
-├── ui/
-│   ├── __init__.py
-│   └── ui_panel.py         # Optional Tkinter UI
-├── tools/
-│   ├── __init__.py
-│   ├── calibrate.py        # MIDI latency calibration
-│   ├── sanity.py           # Testing & validation
-│   └── osc_sanity.py       # OSC debugging
-├── ableton/
-│   ├── aria.als            # Ableton Live set with Max device
-│   └── Live Max knobs.amxd # Max for Live device
-└── tests/                  # Unit tests
-```
+**Clock / automatic mode**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--measures` | `2` | Measures per human+AI cycle |
+| `--beats_per_bar` | `4` | Time signature numerator |
+| `--human_measures` | `1` | Bars before generation triggers |
+| `--gen_measures` | same as `--measures` | Bars for model to generate |
+| `--quantize` | off | Quantize to 1/16 grid |
+
+**Manual mode**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--manual-key` | `r` | Toggle recording |
+| `--play-key` | `p` | Trigger playback |
+| `--max-seconds` | `None` | Recording timeout (seconds) |
+| `--max-bars` | `None` | Recording timeout (bars) |
+| `--gen_seconds` | `1.0` | Generated continuation length |
+
+**OSC (plugin/m4l presets)**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--m4l` | off | Enable OSC server |
+| `--osc-host` | `127.0.0.1` | OSC host |
+| `--osc-in-port` | `9000` | Incoming OSC port |
+| `--osc-out-port` | `9001` | Outgoing OSC port |
+
+**Feedback**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--feedback` | off | Enable feedback capture |
+| `--data-dir` | — | Storage directory (required with `--feedback`) |
+
+**Global**
+
+| Flag | Description |
+|------|-------------|
+| `--checkpoint <path>` | Aria model checkpoint (required) |
+| `--device {cuda,cpu}` | Inference device (default: cuda) |
+| `--list-ports` | List MIDI ports and exit |
+
+Any explicit flag overrides the preset default.
+
+</details>
+
+<details>
+<summary><strong>Live keyboard hotkeys</strong></summary>
+
+| Key | Action |
+|-----|--------|
+| `1` / `2` | Decrease / Increase temperature |
+| `3` / `4` | Decrease / Increase top-p |
+| `5` / `6` | Decrease / Increase min-p |
+
+</details>
+
+<details>
+<summary><strong>OSC message reference</strong></summary>
+
+**Incoming (client → bridge)**
+
+| Address | Payload | Purpose |
+|---------|---------|---------|
+| `/aria/record` | `1` or `0` | Start / stop recording |
+| `/aria/temp` | float 0.1–2.0 | Set temperature |
+| `/aria/top_p` | float 0.1–1.0 | Set top-p |
+| `/aria/min_p` | float 0.0–0.2 | Set min-p |
+| `/aria/tokens` | int 0–2048 | Set max generation tokens |
+| `/aria/play` | — | Trigger playback |
+| `/aria/cancel` | — | Cancel recording |
+| `/aria/ping` | — | Request status snapshot |
+
+**Outgoing (bridge → client)**
+
+| Address | Payload | Purpose |
+|---------|---------|---------|
+| `/aria/status` | string | `IDLE`, `RECORDING`, `GENERATING`, `READY` |
+| `/aria/params` | `[temp, top_p, min_p]` | Current sampling parameters |
+| `/aria/log` | string | Event log message |
+
+</details>
 
 ---
 
 ## Troubleshooting
 
-### Checkpoint Not Found
+<details>
+<summary><strong>Checkpoint not found</strong></summary>
 
-**Problem**: "FileNotFoundError: Could not find checkpoint..."
+Use a relative path from the `real-time/` folder or an absolute path:
 
-**Solution**:
-1. Verify you have downloaded the Aria model checkpoint (`.safetensors`).
-2. Use `--checkpoint` with the **full or relative path** to the file:
-   ```bash
-   # Relative path (from real-time folder)
-   python ableton_bridge.py --checkpoint ../models/model-gen.safetensors --in ARIA_IN --out ARIA_OUT
-   
-   # Absolute path (Windows)
-   python ableton_bridge.py --checkpoint C:/Aria/models/model-gen.safetensors --in ARIA_IN --out ARIA_OUT
-   
-   # Absolute path (macOS/Linux)
-   python ableton_bridge.py --checkpoint /home/user/aria-models/model-gen.safetensors --in ARIA_IN --out ARIA_OUT
-   ```
-3. If cloning from GitHub
-, the model is not included. Download from [Hugging Face](https://huggingface.co/EleutherAI/aria) or use your pre-trained copy.
+```bash
+python ableton_bridge.py plugin --checkpoint ../models/model-gen.safetensors
+python ableton_bridge.py plugin --checkpoint C:/Aria/models/model-gen.safetensors
+```
 
-### MIDI Port Not Found
+</details>
 
-**Problem**: "Failed to open input port 'ARIA_IN'"
+<details>
+<summary><strong>MIDI port not found</strong></summary>
 
-**Solution**:
-1. Install **loopMIDI** (Windows) or equivalent.
-2. Create virtual ports matching the names in your CLI.
-3. Check available ports:
-   ```bash
-   python ableton_bridge.py --list-ports
-   ```
+Windows/loopMIDI may append a suffix (`ARIA_IN 0`). The bridge resolves this automatically — always use the base name. Run `python ableton_bridge.py --list-ports` to check.
 
-### Generation is Slow
+</details>
 
-**Problem**: Generation takes > 2 seconds per bar.
+<details>
+<summary><strong>Generation is slow</strong></summary>
 
-**Solution**:
-- Use `--device cuda` (requires CUDA-capable GPU).
-- Reduce `--gen_seconds` or `--max-new-tokens` to lower generation budget.
-- Check GPU availability:
-  ```bash
-  python -c "import torch; print(torch.cuda.is_available())"
-  ```
+Use CUDA: `--device cuda`. Check GPU: `python -c "import torch; print(torch.cuda.is_available())"`.
 
-### No MIDI Being Captured
+</details>
 
-**Problem**: Human MIDI on `ARIA_IN` is not appearing in the buffer.
+<details>
+<summary><strong>No MIDI being captured</strong></summary>
 
-**Solution**:
-- In Ableton, verify the MIDI track's input is routed to `ARIA_IN`.
-- Enable **Monitor** so input is heard (optional).
-- Check that no other application is reading from `ARIA_IN` (can cause exclusive lock).
+Verify in Ableton that the MIDI track output is routed to `ARIA_IN` and no other app has an exclusive lock on the port.
 
-### OSC Not Working
+</details>
 
-**Problem**: Max device doesn't see OSC messages from the bridge.
+<details>
+<summary><strong>OSC not working</strong></summary>
 
-**Solution**:
-1. Verify the Max device is configured for ports 9000/9001 (or adjust with `--osc-in-port`/`--osc-out-port`).
-2. Check firewall allows UDP on those ports.
-3. Debug with:
-   ```bash
-   python tools/osc_sanity.py --in-port 9000 --out-port 9001
-   ```
+Run `python tools/osc_sanity.py --in-port 9000 --out-port 9001` and check your firewall allows UDP on those ports.
+
+</details>
+
+---
+
+## Project Structure
+
+<details>
+<summary>Expand</summary>
+
+```
+real-time/
+├── ableton_bridge.py       # Main entry point
+├── requirements.txt
+├── README.md
+├── QUICKSTART.md
+├── core/
+│   ├── aria_engine.py      # Model inference wrapper
+│   ├── bridge_engine.py    # Core orchestration (clock mode)
+│   ├── midi_buffer.py      # Rolling MIDI message buffer
+│   ├── prompt_midi.py      # Buffer-to-MIDI conversion
+│   ├── sampling_state.py   # Thread-safe parameter state
+│   ├── tempo_tracker.py    # MIDI clock tempo tracking
+│   └── datastore.py        # Feedback dataset storage
+├── modes/
+│   ├── clock_mode.py       # Pulse-based bar detection
+│   ├── manual_mode.py      # Keyboard-driven mode
+│   ├── osc_controller.py   # OSC server for M4L
+│   └── sampling_hotkeys.py # Live parameter tweaks
+├── ui/
+│   └── ui_panel.py         # Optional Tkinter UI
+├── tools/
+│   ├── calibrate.py        # MIDI latency calibration
+│   ├── sanity.py           # Testing & validation
+│   └── osc_sanity.py       # OSC debugging
+├── ableton/
+│   ├── aria.als            # Ableton Live set
+│   └── Aria Bridge.amxd    # Max for Live device
+└── tests/
+```
+
+</details>
 
 ---
 
 ## Development
 
-### Running Tests
-
 ```bash
 pytest tests/
 ```
 
-### Code Organization
-
-- **Core**: Model inference, MIDI I/O, buffering, synchronization.
-- **Modes**: Independent operation modes (clock, manual, OSC).
-- **UI**: Optional interfaces (Tkinter, Max for Live).
-- **Tools**: Debugging and calibration utilities.
-
-### Adding a New Mode
-
-1. Create a new file in `modes/` (e.g., `my_mode.py`).
-2. Implement a class or function that accepts `aria_engine`, `midi_buffer`, and other shared state.
-3. Import and instantiate in `ableton_bridge.py`.
-4. Add CLI arguments for the new mode.
-
----
-
-## Disclaimer
-
-This project uses the **Aria model**, a pre-trained music language model. Generated MIDI is provided as-is. Always verify copyright and licensing for any generated content in commercial use.
+To add a new mode: create a file in `modes/`, implement a class accepting `aria_engine`, `midi_buffer`, and shared state, then import it in `ableton_bridge.py` and optionally add a preset entry.
 
 ---
 
 ## License
 
-[See LICENSE file](LICENSE)
-
----
-
-## Contact & Support
-
-For issues, feature requests, or contributions:
-- Open an **Issue** on GitHub.
-- Check the **Troubleshooting** section above.
-- Review logs for detailed error messages.
-
----
+[MIT](LICENSE)
