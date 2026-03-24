@@ -11,7 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 FetchContent_Declare(
     juce
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-    GIT_TAG 7.0.9
+    GIT_TAG 8.0.7
 )
 
 FetchContent_MakeAvailable(juce)
