@@ -16,8 +16,8 @@ Aria Bridge is a real-time generative MIDI system that connects the Aria music l
 2. Unzip to a permanent location, for example `C:\Aria Bridge\`.
 3. Run `install.bat` to install Python 3.11 and all dependencies.
 4. Download the Aria model from HuggingFace:
-   `https://huggingface.co/eleutherai/aria`
-   File needed: `model-gen.safetensors`
+   `https://huggingface.co/loubb/aria-medium-base/resolve/main/model-gen.safetensors?download=true`
+   File needed: `model-gen.safetensors` or any equivalent model
 5. Place `model-gen.safetensors` in the `models\` folder.
 6. Install loopMIDI:
    `https://www.tobias-erichsen.de/software/loopmidi.html`
