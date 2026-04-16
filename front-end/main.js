@@ -12,9 +12,15 @@ function resourcesBase() {
     return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 }
 
-function modelPath()   { return path.join(resourcesBase(), 'models', 'model-gen.safetensors'); }
-function backendExe()  { return path.join(resourcesBase(), 'aria_backend.exe'); }
-function pluginExe()   { return path.join(resourcesBase(), 'Aria Bridge.exe'); }
+function modelPath()  { return path.join(resourcesBase(), 'models', 'model-gen.safetensors'); }
+function backendExe() {
+    const name = process.platform === 'darwin' ? 'aria_backend' : 'aria_backend.exe';
+    return path.join(resourcesBase(), name);
+}
+function pluginAppPath() {
+    if (process.platform === 'darwin') return path.join(resourcesBase(), 'Aria Bridge.app');
+    return path.join(resourcesBase(), 'Aria Bridge.exe');
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -43,12 +49,8 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 function spawnBackend(mode, opts = {}) {
-    const args = [
-        mode,
-        '--checkpoint', modelPath(),
-        '--device', 'cuda',
-        '--feedback',
-    ];
+    const args = [mode, '--checkpoint', modelPath(), '--feedback'];
+    if (process.platform !== 'darwin') args.push('--device', 'cuda');
 
     if (app.isPackaged) {
         return spawn(backendExe(), args, opts);
@@ -97,12 +99,16 @@ ipcMain.handle('launch-backend', async (event, mode) => {
 });
 
 ipcMain.handle('launch-standalone', async () => {
-    // Start backend detached so it survives the launcher closing
     const proc = spawnBackend('plugin', { detached: true, stdio: 'ignore' });
     proc.unref();
 
-    if (fs.existsSync(pluginExe())) {
-        spawn(pluginExe(), [], { detached: true, stdio: 'ignore' }).unref();
+    const appPath = pluginAppPath();
+    if (fs.existsSync(appPath)) {
+        if (process.platform === 'darwin') {
+            spawn('open', ['-n', appPath], { detached: true, stdio: 'ignore' }).unref();
+        } else {
+            spawn(appPath, [], { detached: true, stdio: 'ignore' }).unref();
+        }
     }
 
     app.quit();

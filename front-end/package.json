@@ -10,7 +10,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win portable"
+    "build": "electron-builder --win portable",
+    "build:mac": "electron-builder --mac zip"
   },
   "dependencies": {},
   "devDependencies": {
@@ -19,21 +20,31 @@
   },
   "build": {
     "appId": "com.aria.bridge",
-    "productName": "Aria Bridge",
+    "productName": "Aria Launcher",
     "directories": {
       "output": "../dist"
     },
+    "extraResources": [
+      { "from": "../models",   "to": "models",   "filter": ["**"] },
+      { "from": "../feedback", "to": "feedback", "filter": ["**"] }
+    ],
     "win": {
       "target": "portable",
-      "artifactName": "AriaLauncher.exe"
+      "artifactName": "AriaLauncher.exe",
+      "extraResources": [
+        { "from": "../aria_backend.exe", "to": "aria_backend.exe", "filter": ["**"] },
+        { "from": "../Aria Bridge.exe",  "to": "Aria Bridge.exe",  "filter": ["**"] },
+        { "from": "../real-time/Plugin/build/AriaBridge_artefacts/Release/VST3/Aria Bridge.vst3", "to": "Aria Bridge.vst3" }
+      ]
     },
-    "extraResources": [
-      { "from": "../aria_backend.exe",   "to": "aria_backend.exe",   "filter": ["**"] },
-      { "from": "../Aria Bridge.exe",    "to": "Aria Bridge.exe",    "filter": ["**"] },
-      { "from": "../real-time/Plugin/build/AriaBridge_artefacts/Release/VST3/Aria Bridge.vst3", "to": "Aria Bridge.vst3" },
-      { "from": "../models",    "to": "models",   "filter": ["**"], "optional": true },
-      { "from": "../feedback",  "to": "feedback", "filter": ["**"], "optional": true },
-      { "from": "../ableton",   "to": "ableton",  "filter": ["**"], "optional": true }
-    ]
+    "mac": {
+      "target": "zip",
+      "artifactName": "AriaLauncher-mac.zip",
+      "extraResources": [
+        { "from": "../aria_backend",    "to": "aria_backend",    "filter": ["**"] },
+        { "from": "../Aria Bridge.app", "to": "Aria Bridge.app", "filter": ["**"] },
+        { "from": "../real-time/Plugin/build/AriaBridge_artefacts/Release/VST3/Aria Bridge.vst3", "to": "Aria Bridge.vst3" }
+      ]
+    }
   }
 }

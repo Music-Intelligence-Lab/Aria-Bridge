@@ -105,77 +105,86 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure
+      # ── JUCE: Standalone + VST3 ──────────────────────────────────────────
+      - name: Configure JUCE
         working-directory: real-time/Plugin
         run: cmake -B build -G Xcode
 
-      - name: Build
+      - name: Build JUCE Standalone + VST3
         working-directory: real-time/Plugin
-        run: cmake --build build --config Release --target AriaBridge_Standalone
+        run: |
+          cmake --build build --config Release --target AriaBridge_Standalone
+          cmake --build build --config Release --target AriaBridge_VST3
 
-      - name: Ad-hoc sign
+      - name: Ad-hoc sign standalone
         working-directory: real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone
         run: codesign --force --deep --sign - "Aria Bridge.app"
 
-      - name: Zip app bundle
-        working-directory: real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone
-        run: ditto -c -k --sequesterRsrc --keepParent "Aria Bridge.app" "Aria Bridge.zip"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: standalone-mac
-          path: real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone/Aria Bridge.zip
-
-  package-mac:
-    runs-on: macos-latest
-    needs: build-mac
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: standalone-mac
-          path: app-download
-
-      - name: Build package structure
+      - name: Stage JUCE artifacts
         run: |
-          mkdir -p staging/models staging/backend
+          cp -r "real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone/Aria Bridge.app" "Aria Bridge.app"
 
-          ditto -x -k "app-download/Aria Bridge.zip" staging/
+      # ── Python backend → aria_backend ────────────────────────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-          cp start.sh "staging/Aria Bridge.app/Contents/MacOS/start.sh"
-          chmod +x "staging/Aria Bridge.app/Contents/MacOS/start.sh"
+      - name: Install Python dependencies
+        run: pip install -r real-time/requirements.txt pyinstaller
 
-          cp install.sh staging/install.sh
-          chmod +x staging/install.sh
-          cp README.md staging/README.md
-          printf "Download model-gen.safetensors from https://huggingface.co/eleutherai/aria and place it in this folder." \
-            > "staging/models/PUT_MODEL_HERE.txt"
-
-          find real-time -maxdepth 1 -mindepth 1 | while read -r item; do
-            name=$(basename "$item")
-            if [[ "$name" != "Plugin" && "$name" != "build" && "$name" != "__pycache__" ]]; then
-              cp -r "$item" staging/backend/
-            fi
-          done
-
-          cp -r aria staging/backend/aria
-          cp -r config staging/backend/config
-
-      - name: Zip
+      - name: Build aria_backend
         run: |
-          cd staging
-          zip -r --symlinks "../aria-bridge-macos-${{ github.ref_name }}.zip" .
+          pyinstaller --onefile --name aria_backend \
+            --paths real-time \
+            real-time/ableton_bridge.py
+
+      - name: Move aria_backend to root
+        run: mv dist/aria_backend aria_backend
+
+      # ── Electron launcher → AriaLauncher-mac.zip ─────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install launcher dependencies
+        working-directory: front-end
+        run: npm install
+
+      - name: Prepare resource folders for electron-builder
+        run: |
+          mkdir -p models feedback
+
+      - name: Build AriaLauncher (mac)
+        working-directory: front-end
+        run: npm run build:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Package release zip ───────────────────────────────────────────────
+      - name: Create release zip
+        run: |
+          ZIP="AriaBridge-${{ github.ref_name }}-macos.zip"
+          STAGING="staging"
+          mkdir -p "$STAGING/models"
+
+          unzip dist/AriaLauncher-mac.zip -d "$STAGING"
+
+          cp -r "real-time/ableton" "$STAGING/ableton"
+          cp README.md "$STAGING/README.md"
+          printf "Download model-gen.safetensors from HuggingFace and place it in this folder." \
+            > "$STAGING/models/PUT_MODEL_HERE.txt"
+
+          cd "$STAGING"
+          zip -r --symlinks "../$ZIP" .
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-mac
-          path: aria-bridge-macos-${{ github.ref_name }}.zip
+          path: AriaBridge-${{ github.ref_name }}-macos.zip
 
   release:
     runs-on: ubuntu-latest
-    needs: [build-windows, package-mac]
+    needs: [build-windows, build-mac]
 
     steps:
       - uses: actions/download-artifact@v4
@@ -193,5 +202,5 @@ jobs:
         with:
           files: |
             AriaBridge-${{ github.ref_name }}-windows.zip
-            aria-bridge-macos-${{ github.ref_name }}.zip
+            AriaBridge-${{ github.ref_name }}-macos.zip
           body: See README.md for installation instructions.
