@@ -34,10 +34,18 @@ Aria Bridge is a real-time generative MIDI system that connects the Aria music l
 
 - `temp` / `top_p` / `min_p` / `tokens`: generation parameters
 - `record`: start/stop recording your MIDI input
-- `play`: play back the generated output
+- `play`: play back the generated output once it is ready
+- `cancel`: stops whatever is currently happening — cancels an active recording, interrupts generation mid-way, stops playback, or discards a pending output and returns to the record prompt
 - `commit`: save the current generation with feedback ratings
 - `sync`: resync all parameters to the backend
 - `coherence` / `taste` / `repetition` / `continuity` / `grade`: rate the generation (1-5) before committing
+
+## Progress Display
+
+Two progress indicators appear in the plugin during activity:
+
+- **Generating bar**: shown while the model is running, displaying elapsed seconds. Pressing cancel interrupts generation immediately.
+- **Playback bar**: shown during MIDI playback with a `M:SS left` countdown. Pressing cancel stops the MIDI feed.
 
 ## Feedback Data
 

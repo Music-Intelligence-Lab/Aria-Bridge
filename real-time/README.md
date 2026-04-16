@@ -121,7 +121,7 @@ You should see `OSC server listening on 127.0.0.1:9000`. The M4L device status w
 |---------|--------|
 | **Record** | Start/stop capturing MIDI input |
 | **Play** | Send generated MIDI to `ARIA_OUT` |
-| **Cancel** | Discard current recording |
+| **Cancel** | Stops whatever is active: cancels recording, interrupts generation mid-way, stops playback, or discards a pending output and returns to ready-to-record |
 | **Temp / Top-p / Min-p** knobs | Adjust sampling parameters live |
 | **Tokens** knob | Generation token budget (0–2048) |
 
@@ -268,8 +268,9 @@ Any explicit flag overrides the preset default.
 | `/aria/top_p` | float 0.1–1.0 | Set top-p |
 | `/aria/min_p` | float 0.0–0.2 | Set min-p |
 | `/aria/tokens` | int 0–2048 | Set max generation tokens |
-| `/aria/play` | — | Trigger playback |
-| `/aria/cancel` | — | Cancel recording |
+| `/aria/play` | — | Trigger playback of pending output |
+| `/aria/cancel` | — | Cancel recording, interrupt generation, discard pending output |
+| `/cancel_playback` | — | Stop active MIDI playback immediately |
 | `/aria/ping` | — | Request status snapshot |
 
 **Outgoing (bridge → client)**
@@ -279,6 +280,11 @@ Any explicit flag overrides the preset default.
 | `/aria/status` | string | `IDLE`, `RECORDING`, `GENERATING`, `READY` |
 | `/aria/params` | `[temp, top_p, min_p]` | Current sampling parameters |
 | `/aria/log` | string | Event log message |
+| `/generation_start` | — | Model has started generating |
+| `/generation_done` | — | Generation finished or was canceled |
+| `/playback_duration` | float (seconds) | Total duration of the MIDI about to play |
+| `/playback_progress` | float 0.0–1.0 | Playback position |
+| `/playback_stopped` | — | Playback ended or was canceled |
 
 </details>
 
@@ -301,7 +307,7 @@ python ableton_bridge.py plugin --checkpoint C:/Aria/models/model-gen.safetensor
 <details>
 <summary><strong>MIDI port not found</strong></summary>
 
-Windows/loopMIDI may append a suffix (`ARIA_IN 0`). The bridge resolves this automatically — always use the base name. Run `python ableton_bridge.py --list-ports` to check.
+loopMIDI appends a numeric suffix to port names (e.g. `ARIA_IN 3`). The bridge uses case-insensitive prefix matching, so `ARIA_IN` matches `ARIA_IN 3` automatically. Always pass the base name (`ARIA_IN`, `ARIA_OUT`). Run `python ableton_bridge.py --list-ports` to see what ports are available.
 
 </details>
 
