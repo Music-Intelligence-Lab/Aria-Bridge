@@ -15,30 +15,83 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure
+      # ── JUCE: Standalone + VST3 ──────────────────────────────────────────
+      - name: Configure JUCE
         working-directory: real-time/Plugin
         shell: powershell
         run: cmake -B build -G "Visual Studio 17 2022" -A x64
 
-      - name: Build
+      - name: Build JUCE Standalone + VST3
         working-directory: real-time/Plugin
         shell: powershell
-        run: cmake --build build --config Release --target AriaBridge_Standalone
+        run: |
+          cmake --build build --config Release --target AriaBridge_Standalone
+          cmake --build build --config Release --target AriaBridge_VST3
 
-      - name: Stage exe
+      - name: Stage JUCE artifacts
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path staging | Out-Null
-          $exe = Get-ChildItem -Path "real-time/Plugin/build" -Recurse -Filter "Aria Bridge.exe" |
-            Where-Object { $_.FullName -like "*Standalone*" } |
-            Select-Object -First 1
-          if (-not $exe) { throw "Standalone exe not found." }
-          Copy-Item $exe.FullName -Destination "staging/Aria Bridge.exe" -Force
+          $base = "real-time/Plugin/build/AriaBridge_artefacts/Release"
+          Copy-Item "$base/Standalone/Aria Bridge.exe" "Aria Bridge.exe" -Force
+          Copy-Item "$base/VST3/Aria Bridge.vst3" "Aria Bridge.vst3" -Recurse -Force
+
+      # ── Python backend → aria_backend.exe ────────────────────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r real-time/requirements.txt pyinstaller
+
+      - name: Build aria_backend.exe
+        run: |
+          pyinstaller --onefile --name aria_backend `
+            --paths real-time `
+            real-time/ableton_bridge.py
+        shell: powershell
+
+      - name: Move aria_backend.exe to root
+        shell: powershell
+        run: Move-Item dist/aria_backend.exe aria_backend.exe -Force
+
+      # ── Electron launcher → AriaLauncher.exe ─────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install launcher dependencies
+        working-directory: front-end
+        run: npm install
+
+      - name: Build AriaLauncher.exe
+        working-directory: front-end
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Package release zip ───────────────────────────────────────────────
+      - name: Create release zip
+        shell: powershell
+        run: |
+          $zip = "AriaBridge-${{ github.ref_name }}-windows.zip"
+          $staging = "staging"
+          New-Item -ItemType Directory -Force -Path "$staging/models" | Out-Null
+
+          Copy-Item "dist/AriaLauncher.exe"        "$staging/AriaLauncher.exe"   -Force
+          Copy-Item "aria_backend.exe"             "$staging/aria_backend.exe"   -Force
+          Copy-Item "Aria Bridge.exe"              "$staging/Aria Bridge.exe"    -Force
+          Copy-Item "Aria Bridge.vst3"             "$staging/Aria Bridge.vst3"   -Recurse -Force
+          Copy-Item "real-time/ableton"            "$staging/ableton"            -Recurse -Force
+          Copy-Item "README.md"                    "$staging/README.md"          -Force
+          Set-Content "$staging/models/PUT_MODEL_HERE.txt" `
+            "Download model-gen.safetensors from HuggingFace and place it in this folder."
+
+          Compress-Archive -Path "$staging/*" -DestinationPath $zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: standalone-exe
-          path: staging/Aria Bridge.exe
+          name: release-windows
+          path: AriaBridge-${{ github.ref_name }}-windows.zip
 
   build-mac:
     runs-on: macos-latest
@@ -67,50 +120,6 @@ jobs:
           name: standalone-mac
           path: real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone/Aria Bridge.zip
 
-  package-windows:
-    runs-on: windows-latest
-    needs: build-windows
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: standalone-exe
-          path: staging
-
-      - name: Build package structure
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path "staging\models" | Out-Null
-          New-Item -ItemType Directory -Force -Path "staging\backend" | Out-Null
-
-          Copy-Item "install.bat" "staging\install.bat" -Force
-          Copy-Item "start.bat" "staging\start.bat" -Force
-          Copy-Item "README.md" "staging\README.md" -Force
-
-          Set-Content -Path "staging\models\PUT_MODEL_HERE.txt" -Value "Download model-gen.safetensors from https://huggingface.co/eleutherai/aria and place it in this folder."
-
-          Get-ChildItem "real-time" -Force |
-            Where-Object { $_.Name -notin @("Plugin", "build", "__pycache__") } |
-            ForEach-Object {
-              Copy-Item $_.FullName -Destination "staging\backend" -Recurse -Force
-            }
-
-          Copy-Item "aria" "staging\backend\aria" -Recurse -Force
-          Copy-Item "config" "staging\backend\config" -Recurse -Force
-
-      - name: Zip
-        shell: powershell
-        run: |
-          $zip = "aria-bridge-windows-${{ github.ref_name }}.zip"
-          Compress-Archive -Path "staging\*" -DestinationPath $zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-windows
-          path: aria-bridge-windows-${{ github.ref_name }}.zip
-
   package-mac:
     runs-on: macos-latest
     needs: build-mac
@@ -129,7 +138,6 @@ jobs:
 
           ditto -x -k "app-download/Aria Bridge.zip" staging/
 
-          # Inject start.sh into the app bundle and make it executable
           cp start.sh "staging/Aria Bridge.app/Contents/MacOS/start.sh"
           chmod +x "staging/Aria Bridge.app/Contents/MacOS/start.sh"
 
@@ -161,7 +169,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [package-windows, package-mac]
+    needs: [build-windows, package-mac]
 
     steps:
       - uses: actions/download-artifact@v4
@@ -178,6 +186,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            aria-bridge-windows-${{ github.ref_name }}.zip
+            AriaBridge-${{ github.ref_name }}-windows.zip
             aria-bridge-macos-${{ github.ref_name }}.zip
           body: See README.md for installation instructions.

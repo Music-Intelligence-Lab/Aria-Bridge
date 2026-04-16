@@ -429,7 +429,7 @@ def main():
         "--data-dir",
         type=str,
         default=None,
-        help="External directory for storing feedback dataset",
+        help="Directory for storing feedback dataset (default: <base>/feedback/)",
     )
 
     # Apply preset defaults before full parse so explicit flags can still override.
@@ -444,11 +444,6 @@ def main():
         get_midi_ports()
         return 0
 
-    # Validation: feedback mode requires data directory
-    if args.feedback and args.data_dir is None:
-        print("Error: --data-dir must be specified when using --feedback")
-        sys.exit(1)
-
     # Validation: checkpoint is required unless feedback-only mode
     if args.checkpoint is None and not args.feedback:
         print("Error: --checkpoint must be specified. Use --checkpoint /path/to/model.safetensors")
@@ -456,7 +451,15 @@ def main():
         sys.exit(1)
 
     if args.feedback:
-        data_dir = Path(args.data_dir)
+        if args.data_dir is not None:
+            data_dir = Path(args.data_dir)
+        else:
+            # Resolve base directory: exe folder when frozen, repo root when running as script
+            if getattr(sys, "frozen", False):
+                _base = Path(sys.executable).parent
+            else:
+                _base = Path(__file__).parent.parent
+            data_dir = _base / "feedback"
         data_dir.mkdir(parents=True, exist_ok=True)
         print(f"[Feedback] Using dataset directory: {data_dir}")
         datastore = DataStore(data_dir)

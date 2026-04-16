@@ -20,6 +20,5 @@ if not exist "%~dp0models\model-gen.safetensors" (
 "%~dp0venv\Scripts\python.exe" real-time\ableton_bridge.py ^
   plugin ^
   --feedback ^
-  --data-dir "C:\Code\Aria Feedback" ^
   --checkpoint "%~dp0models\model-gen.safetensors" ^
   --device "cuda"

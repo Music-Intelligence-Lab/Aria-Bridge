@@ -6,11 +6,15 @@ const fs = require('fs');
 let mainWindow;
 let backendProcess = null;
 
-const repoRoot = path.join(__dirname, '..');
-const modelPath = path.join(repoRoot, 'models', 'model-gen.safetensors');
-const backendExe = path.join(repoRoot, 'aria_backend.exe');
-const pluginExe = path.join(repoRoot, 'Aria Bridge.exe');
-const isDev = !fs.existsSync(backendExe);
+// When packaged by electron-builder, extraResources land in process.resourcesPath.
+// In dev, resources sit one level above front-end/ (the repo root).
+function resourcesBase() {
+    return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
+}
+
+function modelPath()   { return path.join(resourcesBase(), 'models', 'model-gen.safetensors'); }
+function backendExe()  { return path.join(resourcesBase(), 'aria_backend.exe'); }
+function pluginExe()   { return path.join(resourcesBase(), 'Aria Bridge.exe'); }
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -30,7 +34,7 @@ function createWindow() {
     mainWindow.loadFile('renderer/index.html');
 
     mainWindow.webContents.on('did-finish-load', () => {
-        if (!fs.existsSync(modelPath)) {
+        if (!fs.existsSync(modelPath())) {
             mainWindow.webContents.send('status', 'STATUS:error:model_missing');
         }
     });
@@ -38,29 +42,31 @@ function createWindow() {
 
 app.whenReady().then(createWindow);
 
+function spawnBackend(mode, opts = {}) {
+    const args = [
+        mode,
+        '--checkpoint', modelPath(),
+        '--device', 'cuda',
+        '--feedback',
+    ];
+
+    if (app.isPackaged) {
+        return spawn(backendExe(), args, opts);
+    } else {
+        return spawn('python', [path.join(resourcesBase(), 'real-time', 'ableton_bridge.py'), ...args], {
+            cwd: resourcesBase(),
+            ...opts,
+        });
+    }
+}
+
 ipcMain.handle('launch-backend', async (event, mode) => {
     if (backendProcess) {
         backendProcess.kill();
         backendProcess = null;
     }
 
-    const args = [
-        mode,
-        '--checkpoint', modelPath,
-        '--device', 'cuda',
-        '--feedback',
-        '--data-dir', path.join(repoRoot, 'data'),
-    ];
-
-    let proc;
-    if (isDev) {
-        proc = spawn('python', [path.join(repoRoot, 'real-time', 'ableton_bridge.py'), ...args], {
-            cwd: repoRoot,
-        });
-    } else {
-        proc = spawn(backendExe, args);
-    }
-
+    const proc = spawnBackend(mode);
     backendProcess = proc;
 
     let buffer = '';
@@ -91,29 +97,12 @@ ipcMain.handle('launch-backend', async (event, mode) => {
 });
 
 ipcMain.handle('launch-standalone', async () => {
-    const args = [
-        'plugin',
-        '--checkpoint', modelPath,
-        '--device', 'cuda',
-        '--feedback',
-        '--data-dir', path.join(repoRoot, 'data'),
-    ];
-
     // Start backend detached so it survives the launcher closing
-    let proc;
-    if (isDev) {
-        proc = spawn('python', [path.join(repoRoot, 'real-time', 'ableton_bridge.py'), ...args], {
-            cwd: repoRoot,
-            detached: true,
-            stdio: 'ignore',
-        });
-    } else {
-        proc = spawn(backendExe, args, { detached: true, stdio: 'ignore' });
-    }
+    const proc = spawnBackend('plugin', { detached: true, stdio: 'ignore' });
     proc.unref();
 
-    if (fs.existsSync(pluginExe)) {
-        spawn(pluginExe, [], { detached: true, stdio: 'ignore' }).unref();
+    if (fs.existsSync(pluginExe())) {
+        spawn(pluginExe(), [], { detached: true, stdio: 'ignore' }).unref();
     }
 
     app.quit();

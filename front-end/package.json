@@ -4,9 +4,32 @@
   "description": "Launcher for Aria Bridge",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder --win portable"
   },
   "dependencies": {
     "electron": "^28.0.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.aria.bridge",
+    "productName": "Aria Bridge",
+    "directories": {
+      "output": "../dist"
+    },
+    "win": {
+      "target": "portable",
+      "artifactName": "AriaLauncher.exe"
+    },
+    "extraResources": [
+      { "from": "../aria_backend.exe",   "to": "aria_backend.exe",   "filter": ["**"] },
+      { "from": "../Aria Bridge.exe",    "to": "Aria Bridge.exe",    "filter": ["**"] },
+      { "from": "../real-time/Plugin/build/AriaBridge_artefacts/Release/VST3/Aria Bridge.vst3", "to": "Aria Bridge.vst3" },
+      { "from": "../models",    "to": "models"    },
+      { "from": "../feedback",  "to": "feedback"  },
+      { "from": "../ableton",   "to": "ableton"   }
+    ]
   }
 }
