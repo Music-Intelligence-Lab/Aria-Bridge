@@ -1,0 +1,12 @@
+{
+  "name": "aria-bridge-launcher",
+  "version": "1.0.0",
+  "description": "Launcher for Aria Bridge",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^28.0.0"
+  }
+}

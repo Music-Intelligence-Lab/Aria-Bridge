@@ -1,0 +1,20 @@
+{
+  "episode_id": "20260416_233323_e31954",
+  "timestamp_local": "2026-04-16T23:33:23.291534",
+  "status": "draft",
+  "grade": null,
+  "mode": "manual",
+  "coherence": null,
+  "repetition": null,
+  "taste": null,
+  "continuity": null,
+  "temperature": 0.45,
+  "top_p": 0.81,
+  "min_p": 0.05,
+  "max_tokens": 226,
+  "seed": null,
+  "hashes": {
+    "prompt_mid_sha256": "520bd53acde6253ac0409a4b5c0d3d24207c8594b36baee0721b76e58d538442",
+    "output_mid_sha256": "0932ab369b0e78044ea88be752bdbaef8396599b091691f5ae71dd070e90592b"
+  }
+}

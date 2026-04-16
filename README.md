@@ -2,6 +2,19 @@
 
 Aria Bridge is a real-time generative MIDI system that connects the Aria music language model to any DAW via loopMIDI, controlled through a standalone desktop application.
 
+## Launcher (Recommended)
+
+The easiest way to run Aria Bridge:
+
+1. Install Node.js (https://nodejs.org)
+2. Run `cd front-end && npm install`
+3. Run `npm start`
+4. Select your mode and follow the on-screen instructions
+
+No terminal knowledge required.
+
+---
+
 ## Requirements
 
 - Windows 10/11 64-bit

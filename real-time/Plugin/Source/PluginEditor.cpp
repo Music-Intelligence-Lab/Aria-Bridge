@@ -12,7 +12,6 @@ const juce::Colour recordActiveColour = juce::Colour::fromRGB(0xc6, 0x28, 0x28);
 const juce::Colour disconnectedColour = juce::Colour::fromRGB(0x6a, 0x6a, 0x6a);
 const juce::Colour learningColour = juce::Colour::fromRGB(0xff, 0xd5, 0x4f);
 
-constexpr int statusBarHeight = 40;
 
 juce::String formatFloatValue(double value)
 {
@@ -38,9 +37,10 @@ void AriaLookAndFeel::drawRotarySlider(juce::Graphics& g,
     const auto bounds = juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(y),
                                                static_cast<float>(width), static_cast<float>(height));
     const auto centre = bounds.getCentre();
-    const auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.32f;
-    const auto tickRadius = radius + 8.0f;
-    const auto arcRadius = tickRadius + 8.0f;
+    const auto boundsRadius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
+    const auto radius     = boundsRadius * 0.64f;
+    const auto tickRadius = boundsRadius * 0.80f;
+    const auto arcRadius  = boundsRadius * 0.95f;
     const auto angle = rotaryStartAngle + (sliderPosProportional * (rotaryEndAngle - rotaryStartAngle));
     const auto knobBounds = juce::Rectangle<float>(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
 
@@ -229,7 +229,7 @@ AriaBridgeAudioProcessorEditor::~AriaBridgeAudioProcessorEditor()
 void AriaBridgeAudioProcessorEditor::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds();
-    auto statusBar = bounds.removeFromBottom(54);
+    auto statusBar = bounds.removeFromBottom(statusBarHeight());
 
     g.fillAll(backgroundColour);
     const auto cardBounds = bounds.reduced(10).toFloat();
@@ -245,7 +245,7 @@ void AriaBridgeAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colours::black.withAlpha(0.10f));
     g.drawRoundedRectangle(statusBounds.reduced(0.5f), 10.0f, 1.0f);
 
-    const auto dotBounds = juce::Rectangle<float>(24.0f, static_cast<float>(getHeight() - 35), 12.0f, 12.0f);
+    const auto dotBounds = juce::Rectangle<float>(24.0f, static_cast<float>(getHeight() - statusBarHeight() / 2 - 6), 12.0f, 12.0f);
     g.setColour(isConnected ? juce::Colours::green : disconnectedColour);
     g.fillEllipse(dotBounds);
 
@@ -286,7 +286,7 @@ void AriaBridgeAudioProcessorEditor::parentHierarchyChanged()
 void AriaBridgeAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced(12);
-    auto statusBar = bounds.removeFromBottom(statusBarHeight);
+    auto statusBar = bounds.removeFromBottom(statusBarHeight());
     bounds.removeFromBottom(6);
 
     auto buttonPanel = bounds.removeFromRight(juce::roundToInt(bounds.getWidth() * 0.25f));

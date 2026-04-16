@@ -1,0 +1,4 @@
+episode_id,timestamp_local,status,grade,coherence,repetition,taste,continuity,temperature,top_p,min_p,max_tokens,seed,mode
+20260416_233044_862c6f,2026-04-16T23:30:44.139744,draft,,,,,,0.45,0.81,0.05,1000,,manual
+20260416_233323_e31954,2026-04-16T23:33:23.291534,draft,,,,,,0.45,0.81,0.05,226,,manual
+20260416_233901_d85aca,2026-04-16T23:39:01.182481,draft,,,,,,0.9,0.95,0.0,512,,manual

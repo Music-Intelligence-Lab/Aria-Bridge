@@ -97,21 +97,32 @@ def _play_midi_file(midi_path: str, out_port, progress_cb=None, duration_cb=None
     total_time = mid.length
     if duration_cb and total_time > 0:
         duration_cb(total_time)
+    if total_time > 0:
+        print(f"STATUS:play_duration:{total_time:.3f}", flush=True)
     sent = 0
     elapsed = 0.0
     last_report = -1.0
+    print("STATUS:playing:0.0", flush=True)
+    stopped_printed = False
     for msg in mid.play():
         if stop_event and stop_event.is_set():
             logger.info("[playback] Stop event received — MIDI feed halted")
             print("[playback] Stop event received — MIDI feed halted")
+            print("STATUS:stopped", flush=True)
+            stopped_printed = True
             break
         elapsed += msg.time
         if hasattr(msg, "type") and msg.type in ("note_on", "note_off", "control_change"):
             out_port.send(msg)
             sent += 1
-        if progress_cb and total_time > 0 and elapsed - last_report >= 0.05:
-            progress_cb(min(1.0, elapsed / total_time))
+        if total_time > 0 and elapsed - last_report >= 0.05:
+            progress = min(1.0, elapsed / total_time)
+            if progress_cb:
+                progress_cb(progress)
+            print(f"STATUS:playing:{progress:.3f}", flush=True)
             last_report = elapsed
+    if not stopped_printed:
+        print("STATUS:stopped", flush=True)
     return sent, total_time
 
 
@@ -221,6 +232,7 @@ class ManualModeSession:
         self.in_port = mido.open_input(in_name)
         self.out_port = mido.open_output(out_name)
         logger.info(f"Manual mode ports opened: IN={in_name}, OUT={out_name}")
+        print("STATUS:ports_ready", flush=True)
 
     def _close_ports(self) -> None:
         try:
@@ -543,8 +555,11 @@ class ManualModeSession:
                 logger.exception(f"[manual] Generation error: {e}")
 
         gen_thread = threading.Thread(target=_run_generate, daemon=True)
+        print("STATUS:generating", flush=True)
         gen_thread.start()
 
+        gen_start_time = time.time()
+        last_status_elapsed = -1.0
         while gen_thread.is_alive():
             if self.generation_cancel_event.is_set() and gen_thread_id[0] is not None:
                 logger.info("[manual] Injecting cancel into generation thread")
@@ -554,9 +569,14 @@ class ManualModeSession:
                     ctypes.py_object(_GenerationCanceled),
                 )
                 gen_thread_id[0] = None
+            elapsed = time.time() - gen_start_time
+            if elapsed - last_status_elapsed >= 0.5:
+                print(f"STATUS:generating:{elapsed:.1f}", flush=True)
+                last_status_elapsed = elapsed
             time.sleep(0.05)
 
         gen_thread.join(timeout=10.0)
+        print("STATUS:generation_done", flush=True)
 
         if self.osc_generation_done_cb:
             self.osc_generation_done_cb()

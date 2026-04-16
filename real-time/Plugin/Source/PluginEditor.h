@@ -112,6 +112,7 @@ private:
     juce::Label& getValueLabelForControl(AriaBridgeAudioProcessor::ControlId controlId);
     void configureStandaloneWindowIfNeeded();
     void timerCallback() override;
+    int statusBarHeight() const noexcept { return juce::jmax(44, juce::roundToInt(getHeight() * 0.14f)); }
 
     AriaBridgeAudioProcessor& audioProcessor;
 

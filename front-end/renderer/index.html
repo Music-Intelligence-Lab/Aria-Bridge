@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aria Bridge</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+    <!-- Drag region for frameless window -->
+    <div class="titlebar">
+        <span class="titlebar-title">ARIA BRIDGE</span>
+        <button class="close-btn" onclick="window.api.quit()">✕</button>
+    </div>
+
+    <!-- Screen: Mode Selection -->
+    <div id="screen-mode" class="screen active">
+        <h1>ARIA BRIDGE</h1>
+        <p class="subtitle">Select your workflow</p>
+        <div class="btn-group">
+            <button class="btn" id="btn-m4l">M4L Device</button>
+            <button class="btn" id="btn-plugin">Plugin</button>
+            <button class="btn disabled" disabled>Clock Mode <span class="tag">coming soon</span></button>
+        </div>
+    </div>
+
+    <!-- Screen: Plugin Sub-Selection -->
+    <div id="screen-plugin" class="screen">
+        <h1>SELECT PLUGIN MODE</h1>
+        <div class="btn-group">
+            <button class="btn" id="btn-standalone">Standalone</button>
+            <button class="btn" id="btn-vst3">VST3</button>
+        </div>
+        <button class="btn btn-back" id="btn-back-plugin">← Back</button>
+    </div>
+
+    <!-- Screen: VST3 Waiting -->
+    <div id="screen-vst3" class="screen">
+        <h1>LOAD VST3 IN YOUR DAW</h1>
+        <p class="subtitle">Load <strong>Aria Bridge.vst3</strong> in your DAW, then click Continue.</p>
+        <div class="btn-group">
+            <button class="btn btn-primary" id="btn-vst3-continue">Continue</button>
+        </div>
+        <button class="btn btn-back" id="btn-back-vst3">← Back</button>
+    </div>
+
+    <!-- Screen: Status / Running -->
+    <div id="screen-status" class="screen">
+        <div class="status-row">
+            <span id="status-dot" class="dot dot-idle"></span>
+            <span id="status-text">Starting...</span>
+        </div>
+
+        <div id="ports-row" class="info-row hidden">
+            <span class="check">✓</span> MIDI ports detected
+        </div>
+
+        <div id="gen-section" class="progress-section hidden">
+            <div class="progress-label" id="gen-label">Generating...</div>
+            <div class="progress-track">
+                <div id="gen-bar" class="progress-bar gen-bar indeterminate"></div>
+            </div>
+        </div>
+
+        <div id="play-section" class="progress-section hidden">
+            <div class="progress-label" id="play-label">Playing...</div>
+            <div class="progress-track">
+                <div id="play-bar" class="progress-bar play-bar" style="width:0%"></div>
+            </div>
+        </div>
+
+        <div id="error-box" class="error-box hidden"></div>
+
+        <div class="status-footer">
+            <span id="mode-label" class="mode-label"></span>
+            <button class="btn btn-small" onclick="window.api.quit()">Quit</button>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

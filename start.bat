@@ -1,8 +1,6 @@
 @echo off
 setlocal
 
-cd /d "%~dp0real-time"
-
 if not exist "%~dp0venv\Scripts\python.exe" (
     echo ERROR: Virtual environment not found.
     echo Please run install.bat first.
@@ -19,9 +17,9 @@ if not exist "%~dp0models\model-gen.safetensors" (
     exit /b 1
 )
 
-"%~dp0venv\Scripts\python.exe" ableton_bridge.py ^
+"%~dp0venv\Scripts\python.exe" real-time\ableton_bridge.py ^
   plugin ^
   --feedback ^
-  --data-dir "C:\Code\Aria Feedback"^
+  --data-dir "C:\Code\Aria Feedback" ^
   --checkpoint "%~dp0models\model-gen.safetensors" ^
   --device "cuda"

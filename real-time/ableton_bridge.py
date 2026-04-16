@@ -567,6 +567,7 @@ def main():
             device=args.device,
             config_name="medium",
         )
+        print("STATUS:ready", flush=True)
 
         if osc:
             osc.send_status(session_state.status if hasattr(session_state, "status") else "IDLE")
@@ -670,9 +671,11 @@ def main():
 
     except FileNotFoundError as e:
         logger.error(str(e))
+        print(f"STATUS:error:{e}", flush=True)
         return 1
     except Exception as e:
         logger.exception(f"Fatal error: {e}")
+        print(f"STATUS:error:{e}", flush=True)
         return 1
 
 
