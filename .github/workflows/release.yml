@@ -81,7 +81,8 @@ jobs:
         run: |
           $zip = "AriaBridge-${{ github.ref_name }}-windows.zip"
           $staging = "staging"
-          New-Item -ItemType Directory -Force -Path "$staging/models" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$staging/models"   | Out-Null
+          New-Item -ItemType Directory -Force -Path "$staging/feedback" | Out-Null
 
           Copy-Item "dist/AriaLauncher.exe"        "$staging/AriaLauncher.exe"   -Force
           Copy-Item "aria_backend.exe"             "$staging/aria_backend.exe"   -Force
@@ -139,7 +140,7 @@ jobs:
             real-time/ableton_bridge.py
 
       - name: Move aria_backend to root
-        run: mv dist/aria_backend aria_backend
+        run: mv dist/aria_backend aria_backend && chmod +x aria_backend
 
       # ── Electron launcher → AriaLauncher-mac.zip ─────────────────────────
       - uses: actions/setup-node@v4
@@ -169,6 +170,7 @@ jobs:
 
           unzip dist/AriaLauncher-mac.zip -d "$STAGING"
 
+          mkdir -p "$STAGING/feedback"
           cp -r "real-time/ableton" "$STAGING/ableton"
           cp README.md "$STAGING/README.md"
           printf "Download model-gen.safetensors from HuggingFace and place it in this folder." \

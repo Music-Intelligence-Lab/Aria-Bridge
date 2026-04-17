@@ -170,10 +170,7 @@ window.api.onStatus((line) => {
             break;
 
         case 'error': {
-            const msg = value === 'model_missing'
-                ? 'Model not found. Place model-gen.safetensors in the models/ folder.'
-                : value;
-            errorBox.textContent = '⚠ ' + msg;
+            errorBox.textContent = '⚠ ' + value;
             errorBox.classList.remove('hidden');
             setStatus('error', 'Error');
             stopGenTimer();

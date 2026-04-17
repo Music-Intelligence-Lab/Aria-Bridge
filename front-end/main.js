@@ -6,13 +6,22 @@ const fs = require('fs');
 let mainWindow;
 let backendProcess = null;
 
-// When packaged by electron-builder, extraResources land in process.resourcesPath.
-// In dev, resources sit one level above front-end/ (the repo root).
+// userBase: folder where the user placed the launcher (next to models/, ableton/, etc.)
+//   Windows portable: electron-builder sets PORTABLE_EXECUTABLE_DIR
+//   Mac: parent of the .app bundle (3 levels up from the binary)
+//   Dev: repo root
+function userBase() {
+    if (!app.isPackaged) return path.join(__dirname, '..');
+    if (process.platform === 'darwin') return path.resolve(process.execPath, '../../../..');
+    return process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
+}
+
+// resourcesBase: where electron-builder places extraResources (bundled executables)
 function resourcesBase() {
     return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 }
 
-function modelPath()  { return path.join(resourcesBase(), 'models', 'model-gen.safetensors'); }
+function modelPath()  { return path.join(userBase(), 'models', 'model-gen.safetensors'); }
 function backendExe() {
     const name = process.platform === 'darwin' ? 'aria_backend' : 'aria_backend.exe';
     return path.join(resourcesBase(), name);
@@ -41,15 +50,17 @@ function createWindow() {
 
     mainWindow.webContents.on('did-finish-load', () => {
         if (!fs.existsSync(modelPath())) {
-            mainWindow.webContents.send('status', 'STATUS:error:model_missing');
+            mainWindow.webContents.send('status', `STATUS:error:Model not found. Place model-gen.safetensors in: ${modelPath()}`);
         }
     });
 }
 
 app.whenReady().then(createWindow);
 
+function feedbackDir() { return path.join(userBase(), 'feedback'); }
+
 function spawnBackend(mode, opts = {}) {
-    const args = [mode, '--checkpoint', modelPath(), '--feedback'];
+    const args = [mode, '--checkpoint', modelPath(), '--feedback', '--data-dir', feedbackDir()];
     if (process.platform !== 'darwin') args.push('--device', 'cuda');
 
     if (app.isPackaged) {
