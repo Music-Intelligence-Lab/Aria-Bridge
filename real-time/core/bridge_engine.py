@@ -8,7 +8,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from .prompt_midi import buffer_to_tempfile_midi
+try:
+    from .prompt_midi import buffer_to_tempfile_midi
+except ImportError:
+    from prompt_midi import buffer_to_tempfile_midi
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +258,10 @@ class AbletonBridge:
             self._setup_midi_ports()
             # Start clock grid if requested
             if self.clock_in:
-                from ..modes.clock_mode import ClockGrid
+                try:
+                    from ..modes.clock_mode import ClockGrid
+                except ImportError:
+                    from modes.clock_mode import ClockGrid
 
                 self.clock_grid = ClockGrid(clock_port_name=self.clock_in, measures=self.measures, beats_per_bar=self.beats_per_bar)
                 # Do NOT register boundary callback; we use anchor-based boundary detection in _generation_loop

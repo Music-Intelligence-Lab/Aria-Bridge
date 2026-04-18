@@ -11,7 +11,10 @@
     <!-- Drag region for frameless window -->
     <div class="titlebar">
         <span class="titlebar-title">ARIA BRIDGE</span>
-        <button class="close-btn" onclick="window.api.quit()">✕</button>
+        <div class="titlebar-btns">
+            <button class="titlebar-btn minimize-btn" onclick="window.api.minimize()">─</button>
+            <button class="titlebar-btn close-btn" onclick="window.api.quit()">✕</button>
+        </div>
     </div>
 
     <!-- Screen: Mode Selection -->
@@ -53,7 +56,7 @@
         </div>
 
         <div id="ports-row" class="info-row hidden">
-            <span class="check">✓</span> MIDI ports detected
+            <span class="check">✓</span> MIDI ports connected
         </div>
 
         <div id="gen-section" class="progress-section hidden">
@@ -61,6 +64,10 @@
             <div class="progress-track">
                 <div id="gen-bar" class="progress-bar gen-bar indeterminate"></div>
             </div>
+        </div>
+
+        <div id="awaiting-play-row" class="awaiting-play-row hidden">
+            <span class="play-arrow">▶</span> <span id="awaiting-play-text">Output ready — press Play in plugin</span>
         </div>
 
         <div id="play-section" class="progress-section hidden">
@@ -71,6 +78,8 @@
         </div>
 
         <div id="error-box" class="error-box hidden"></div>
+
+        <div id="activity-log" class="activity-log"></div>
 
         <div class="status-footer">
             <span id="mode-label" class="mode-label"></span>

@@ -26,19 +26,20 @@
     },
     "win": {
       "target": "zip",
+      "icon": "assets/icon.ico",
       "extraResources": [
-        { "from": "../aria_backend.exe", "to": "aria_backend.exe", "filter": ["**"] },
-        { "from": "../Aria Bridge.exe",  "to": "Aria Bridge.exe",  "filter": ["**"] },
-        { "from": "../real-time/Plugin/build/AriaBridge_artefacts/Release/VST3/Aria Bridge.vst3", "to": "Aria Bridge.vst3" }
+        { "from": "../dist/aria_backend.exe",   "to": "aria_backend.exe",   "filter": ["**"] },
+        { "from": "../dist/Aria Bridge.exe",    "to": "Aria Bridge.exe",    "filter": ["**"] },
+        { "from": "../dist/Aria Bridge.vst3",   "to": "Aria Bridge.vst3",   "filter": ["**"] }
       ]
     },
     "mac": {
       "target": "zip",
       "artifactName": "AriaLauncher-mac.zip",
       "extraResources": [
-        { "from": "../aria_backend",    "to": "aria_backend",    "filter": ["**"] },
-        { "from": "../Aria Bridge.app", "to": "Aria Bridge.app", "filter": ["**"] },
-        { "from": "../real-time/Plugin/build/AriaBridge_artefacts/Release/VST3/Aria Bridge.vst3", "to": "Aria Bridge.vst3" }
+        { "from": "../dist/aria_backend",    "to": "aria_backend",    "filter": ["**"] },
+        { "from": "../dist/Aria Bridge.app", "to": "Aria Bridge.app", "filter": ["**"] },
+        { "from": "../dist/Aria Bridge.vst3","to": "Aria Bridge.vst3","filter": ["**"] }
       ]
     }
   }

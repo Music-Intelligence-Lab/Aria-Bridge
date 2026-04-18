@@ -4,7 +4,10 @@ import tempfile
 import time
 from typing import List
 
-from .midi_buffer import TimestampedMidiMsg
+try:
+    from .midi_buffer import TimestampedMidiMsg
+except ImportError:
+    from midi_buffer import TimestampedMidiMsg
 
 try:
     from mido import MidiFile, MidiTrack, Message, MetaMessage

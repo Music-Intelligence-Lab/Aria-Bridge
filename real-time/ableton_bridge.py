@@ -101,30 +101,36 @@ def find_checkpoint(checkpoint_hint: Optional[str] = None) -> str:
                 logger.info(f"Found checkpoint: {p}")
                 return str(p.resolve())
 
-    # If no hint or hint not found, search default locations
+    # If no hint or hint not found, scan models/ directories for any .safetensors/.gen file
     import sys as _sys
-    _bases = [Path("."), Path(__file__).parent, Path(__file__).parent.parent]
     if getattr(_sys, "frozen", False):
-        _bases.insert(0, Path(_sys.executable).parent)
-    default_paths = [b / "models" / "model-gen.safetensors" for b in _bases]
+        # exe is at <app>/resources/aria_backend.exe; models/ is at <app>/models/
+        _exe = Path(_sys.executable).parent
+        _bases = [_exe, _exe.parent]
+    else:
+        _bases = [Path(__file__).parent, Path(__file__).parent.parent, Path(".")]
 
-    for p in default_paths:
-        if p.exists():
-            logger.info(f"Found checkpoint at default location: {p}")
-            return str(p.resolve())
+    for base in _bases:
+        models_dir = base / "models"
+        if models_dir.is_dir():
+            candidates = sorted(
+                [f for f in models_dir.iterdir() if f.suffix in (".safetensors", ".gen")],
+                key=lambda f: f.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                logger.info(f"Found checkpoint: {candidates[0]}")
+                return str(candidates[0].resolve())
 
     # Not found
     if checkpoint_hint:
         raise FileNotFoundError(
             f"Could not find checkpoint '{checkpoint_hint}'. "
-            f"Searched: {[str(p) for p in rel_paths]}. "
-            f"Provide --checkpoint with correct path."
+            f"Provide --checkpoint with the correct path."
         )
     else:
         raise FileNotFoundError(
-            f"No checkpoint found. Please provide --checkpoint with path to model.safetensors. "
-            f"Example: python ableton_bridge.py --checkpoint ../models/model-gen.safetensors "
-            f"--in ARIA_IN --out ARIA_OUT"
+            f"No model found. Place a .safetensors file in the models/ folder next to the launcher."
         )
 
 
@@ -235,6 +241,51 @@ class FeedbackManager:
             self.current_episode_id = None
             self.draft_pending = False
             self.latest_grade = None
+
+
+def _make_tray_icon():
+    from PIL import Image, ImageDraw
+    size = 64
+    img = Image.new('RGBA', (size, size), (26, 26, 46, 255))
+    draw = ImageDraw.Draw(img)
+    sw = max(3, int(size * 0.115))
+    m = size * 0.12
+    apex = (size * 0.5, m)
+    left_pt = (m, size - m)
+    right_pt = (size - m, size - m)
+    bar_y = size * 0.57
+    bar_lx = apex[0] + (bar_y - apex[1]) / (left_pt[1] - apex[1]) * (left_pt[0] - apex[0])
+    bar_rx = apex[0] + (bar_y - apex[1]) / (right_pt[1] - apex[1]) * (right_pt[0] - apex[0])
+    green = (80, 175, 76)
+    draw.line([apex, left_pt],           fill=green, width=sw)
+    draw.line([apex, right_pt],          fill=green, width=sw)
+    draw.line([(bar_lx, bar_y), (bar_rx, bar_y)], fill=green, width=sw)
+    return img
+
+
+def _stdin_watchdog():
+    try:
+        while sys.stdin.buffer.read(1):
+            pass
+    except Exception:
+        pass
+    os._exit(0)
+
+
+def _start_backend_tray():
+    try:
+        import pystray
+        icon = pystray.Icon(
+            'aria_backend',
+            _make_tray_icon(),
+            'Aria Backend — running',
+            menu=pystray.Menu(
+                pystray.MenuItem('Quit Backend', lambda: os._exit(0))
+            ),
+        )
+        threading.Thread(target=icon.run, daemon=True).start()
+    except Exception:
+        pass
 
 
 def main():
@@ -439,6 +490,9 @@ def main():
 
     args = parser.parse_args()
 
+    threading.Thread(target=_stdin_watchdog, daemon=True).start()
+    _start_backend_tray()
+
     # Handle port listing early to avoid requiring checkpoint or other setup
     if args.list_ports:
         get_midi_ports()
@@ -519,6 +573,10 @@ def main():
             startup_state = sync_state_on_startup(osc, timeout=2.0)
             if startup_state:
                 logger.info(f"OSC params after startup sync: {startup_state}")
+                t = startup_state.get('temp', 0)
+                tp = startup_state.get('top_p', 0)
+                tok = startup_state.get('tokens', 0)
+                print(f"STATUS:synced:temp={t:.2f} top_p={tp:.2f} tokens={tok}", flush=True)
 
         # Resolve device (auto-detect if not specified)
         if args.device is None:
@@ -619,18 +677,10 @@ def main():
         # CLOCK MODE (existing behavior)
         buffer = RollingMidiBuffer(window_seconds=args.listen_seconds)
 
-        # Start tempo tracker only if NOT using clock_in (they conflict on same MIDI port)
+        # TempoTracker conflicts with ClockGrid on the same MIDI port; skip when clock_in is set.
         tempo_tracker = None
         if args.clock_in:
             logger.info(f"Using ClockGrid on '{args.clock_in}'; disabling TempoTracker (port conflict)")
-        else:
-            if args.clock_in:
-                try:
-                    tempo_tracker = TempoTracker(clock_port_name=args.clock_in)
-                    tempo_tracker.start()
-                    logger.info(f"Tempo tracker started on '{args.clock_in}'")
-                except Exception as e:
-                    logger.warning(f"Failed to start tempo tracker: {e}. Continuing without tempo sync.")
         
         bridge = AbletonBridge(
             in_port_name=args.in_port,
@@ -645,9 +695,6 @@ def main():
             gen_measures=args.gen_measures,
             human_measures=args.human_measures,
             cooldown_seconds=args.cooldown_seconds,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            min_p=args.min_p,
             quantize=args.quantize,
             ticks_per_beat=args.ticks_per_beat,
             feedback_manager=feedback_manager,

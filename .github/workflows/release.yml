@@ -28,12 +28,13 @@ jobs:
           cmake --build build --config Release --target AriaBridge_Standalone
           cmake --build build --config Release --target AriaBridge_VST3
 
-      - name: Stage JUCE artifacts
+      - name: Stage JUCE artifacts into dist
         shell: powershell
         run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
           $base = "real-time/Plugin/build/AriaBridge_artefacts/Release"
-          Copy-Item "$base/Standalone/Aria Bridge.exe" "Aria Bridge.exe" -Force
-          Copy-Item "$base/VST3/Aria Bridge.vst3" "Aria Bridge.vst3" -Recurse -Force
+          Copy-Item "$base/Standalone/Aria Bridge.exe" "dist/Aria Bridge.exe" -Force
+          Copy-Item "$base/VST3/Aria Bridge.vst3" "dist/Aria Bridge.vst3" -Recurse -Force
 
       # ── Python backend → aria_backend.exe ────────────────────────────────
       - uses: actions/setup-python@v5
@@ -41,18 +42,15 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python dependencies
-        run: pip install -r real-time/requirements.txt pyinstaller
+        run: |
+          pip install pyinstaller
+          pip install -r real-time/requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
 
       - name: Build aria_backend.exe
-        run: |
-          pyinstaller --onefile --name aria_backend `
-            --paths real-time `
-            real-time/ableton_bridge.py
+        run: pyinstaller aria_backend.spec
         shell: powershell
 
-      - name: Move aria_backend.exe to root
-        shell: powershell
-        run: Move-Item dist/aria_backend.exe aria_backend.exe -Force
+      # aria_backend.exe already in dist/ from PyInstaller — no move needed
 
       # ── Electron launcher → AriaLauncher.exe ─────────────────────────────
       - uses: actions/setup-node@v4
@@ -125,9 +123,11 @@ jobs:
         working-directory: real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone
         run: codesign --force --deep --sign - "Aria Bridge.app"
 
-      - name: Stage JUCE artifacts
+      - name: Stage JUCE artifacts into dist
         run: |
-          cp -r "real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone/Aria Bridge.app" "Aria Bridge.app"
+          mkdir -p dist
+          cp -r "real-time/Plugin/build/AriaBridge_artefacts/Release/Standalone/Aria Bridge.app" "dist/Aria Bridge.app"
+          cp -r "real-time/Plugin/build/AriaBridge_artefacts/Release/VST3/Aria Bridge.vst3" "dist/Aria Bridge.vst3"
 
       # ── Python backend → aria_backend ────────────────────────────────────
       - uses: actions/setup-python@v5
@@ -135,16 +135,15 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python dependencies
-        run: pip install -r real-time/requirements.txt pyinstaller
+        run: |
+          pip install pyinstaller
+          pip install -r real-time/requirements.txt
 
       - name: Build aria_backend
-        run: |
-          pyinstaller --onefile --name aria_backend \
-            --paths real-time \
-            real-time/ableton_bridge.py
+        run: pyinstaller aria_backend.spec
 
-      - name: Move aria_backend to root
-        run: mv dist/aria_backend aria_backend && chmod +x aria_backend
+      - name: Mark aria_backend executable
+        run: chmod +x dist/aria_backend
 
       # ── Electron launcher → AriaLauncher-mac.zip ─────────────────────────
       - uses: actions/setup-node@v4

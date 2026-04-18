@@ -344,6 +344,7 @@ class OscController:
             logger.warning(f"Invalid payload for /aria/{name} (ignored)")
             return
         logger.info(f"[OSC] {name} -> {val}")
+        print(f"STATUS:feedback:{name}:{val:.2f}", flush=True)
         if self.feedback_param_cb:
             self.feedback_param_cb(name, val)
 
@@ -360,7 +361,6 @@ class OscController:
         self._handle_feedback_param("continuity", args)
 
     def _handle_grade(self, addr, *args):
-        print("OSC RECEIVED:", addr, args)
         if not args:
             return
         try:
@@ -369,6 +369,7 @@ class OscController:
             logger.warning("Invalid /aria/grade payload (ignored)")
             return
         logger.info(f"[OSC] grade -> {grade}")
+        print(f"STATUS:feedback:grade:{grade}", flush=True)
         if self.grade_cb:
             self.grade_cb(grade)
 
@@ -381,6 +382,7 @@ class OscController:
                 flag = 0
         if flag >= 1:
             logger.info("[OSC] commit received")
+            print("STATUS:feedback:commit", flush=True)
             if self.commit_cb:
                 self.commit_cb()
         else:
@@ -398,6 +400,7 @@ class OscController:
         self._record_startup_value("temp", v)
         self.send_params()
         self.send_log(f"Temp -> {self.sampling_state.get_values()[0]:.2f}")
+        print(f"STATUS:param:temp:{v:.2f}", flush=True)
 
     def _handle_top_p(self, addr, *args):
         if not args:
@@ -411,6 +414,7 @@ class OscController:
         self._record_startup_value("top_p", v)
         self.send_params()
         self.send_log(f"Top_p -> {self.sampling_state.get_values()[1]:.2f}")
+        print(f"STATUS:param:top_p:{v:.2f}", flush=True)
 
     def _handle_min_p(self, addr, *args):
         if not args:
@@ -424,6 +428,7 @@ class OscController:
         self._record_startup_value("min_p", v)
         self.send_params()
         self.send_log(f"Min_p -> {self.sampling_state.get_values()[2]:.2f}")
+        print(f"STATUS:param:min_p:{v:.2f}", flush=True)
 
     def _handle_tokens(self, addr, *args):
         logger.info(f"Received /aria/tokens: {args[0] if args else 'None'}")
@@ -439,6 +444,7 @@ class OscController:
         self.session_state.set_max_tokens(clamped)
         self._record_startup_value("tokens", clamped)
         self.send_log(f"Max tokens -> {clamped}")
+        print(f"STATUS:param:tokens:{clamped}", flush=True)
 
     def _handle_ping(self, addr, *args):
         self.send_status(self.session_state.get_snapshot().get("status", "UNKNOWN"))

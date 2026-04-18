@@ -43,8 +43,13 @@ html, body {
     color: var(--muted);
 }
 
-.close-btn {
+.titlebar-btns {
     -webkit-app-region: no-drag;
+    display: flex;
+    gap: 4px;
+}
+
+.titlebar-btn {
     background: none;
     border: none;
     color: var(--muted);
@@ -55,6 +60,7 @@ html, body {
     line-height: 1;
     transition: background 0.15s, color 0.15s;
 }
+.minimize-btn:hover { background: #333; color: var(--text); }
 .close-btn:hover { background: var(--red); color: #fff; }
 
 /* Screens */
@@ -127,15 +133,15 @@ h1 {
 #screen-status {
     align-items: flex-start;
     justify-content: flex-start;
-    padding: 28px 40px;
-    gap: 16px;
+    padding: 24px 40px;
+    gap: 14px;
 }
 
 .status-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 .dot {
@@ -199,6 +205,58 @@ h1 {
     animation: sweep 1.4s ease-in-out infinite;
 }
 
+/* Awaiting play */
+.awaiting-play-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(76, 175, 80, 0.08);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    border-radius: 6px;
+    padding: 10px 14px;
+    color: var(--green);
+    font-size: 13px;
+    font-weight: 500;
+    width: 100%;
+    max-width: 560px;
+}
+
+.play-arrow {
+    font-size: 11px;
+    animation: pulse-play 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-play {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* Activity log */
+.activity-log {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+}
+
+.activity-entry {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color 0.3s;
+}
+
+.activity-entry:last-child {
+    color: #bbb;
+}
+
 /* Error */
 .error-box {
     background: rgba(229, 57, 53, 0.12);
@@ -215,7 +273,7 @@ h1 {
 /* Footer */
 .status-footer {
     position: absolute;
-    bottom: 24px;
+    bottom: 20px;
     right: 40px;
     display: flex;
     align-items: center;

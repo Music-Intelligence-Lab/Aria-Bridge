@@ -554,29 +554,43 @@ class ManualModeSession:
             except Exception as e:
                 logger.exception(f"[manual] Generation error: {e}")
 
+        MAX_GEN_TIMEOUT_S = 90
+
         gen_thread = threading.Thread(target=_run_generate, daemon=True)
         print("STATUS:generating", flush=True)
         gen_thread.start()
 
         gen_start_time = time.time()
         last_status_elapsed = -1.0
+        timed_out = False
         while gen_thread.is_alive():
             if self.generation_cancel_event.is_set() and gen_thread_id[0] is not None:
                 logger.info("[manual] Injecting cancel into generation thread")
-                print("[manual] Cancel received — interrupting generation")
                 ctypes.pythonapi.PyThreadState_SetAsyncExc(
                     ctypes.c_ulong(gen_thread_id[0]),
                     ctypes.py_object(_GenerationCanceled),
                 )
                 gen_thread_id[0] = None
             elapsed = time.time() - gen_start_time
+            if elapsed > MAX_GEN_TIMEOUT_S:
+                logger.error(f"[manual] Generation timed out after {int(elapsed)}s")
+                print(f"STATUS:error:Generation timed out after {int(elapsed)}s — check GPU/model.", flush=True)
+                if gen_thread_id[0] is not None:
+                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_ulong(gen_thread_id[0]),
+                        ctypes.py_object(_GenerationCanceled),
+                    )
+                    gen_thread_id[0] = None
+                timed_out = True
+                break
             if elapsed - last_status_elapsed >= 0.5:
                 print(f"STATUS:generating:{elapsed:.1f}", flush=True)
                 last_status_elapsed = elapsed
             time.sleep(0.05)
 
-        gen_thread.join(timeout=10.0)
-        print("STATUS:generation_done", flush=True)
+        gen_thread.join(timeout=5.0)
+        if not timed_out:
+            print("STATUS:generation_done", flush=True)
 
         if self.osc_generation_done_cb:
             self.osc_generation_done_cb()
@@ -627,7 +641,7 @@ class ManualModeSession:
                 self.osc_status_cb("READY")
             self._log_ui("Output ready. Press 'p' to play.")
             logger.info("[MANUAL] Output ready. Press 'p' to play.")
-            print("[MANUAL] Output ready. Press 'p' to play.")
+            print("STATUS:awaiting_play", flush=True)
             self._wait_for_play()
         else:
             if self.play_toggle:
