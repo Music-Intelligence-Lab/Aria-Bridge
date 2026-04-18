@@ -102,11 +102,11 @@ def find_checkpoint(checkpoint_hint: Optional[str] = None) -> str:
                 return str(p.resolve())
 
     # If no hint or hint not found, search default locations
-    default_paths = [
-        Path("models/model-gen.safetensors"),
-        Path(__file__).parent / "models" / "model-gen.safetensors",
-        Path(__file__).parent.parent / "models" / "model-gen.safetensors",
-    ]
+    import sys as _sys
+    _bases = [Path("."), Path(__file__).parent, Path(__file__).parent.parent]
+    if getattr(_sys, "frozen", False):
+        _bases.insert(0, Path(_sys.executable).parent)
+    default_paths = [b / "models" / "model-gen.safetensors" for b in _bases]
 
     for p in default_paths:
         if p.exists():
@@ -443,12 +443,6 @@ def main():
     if args.list_ports:
         get_midi_ports()
         return 0
-
-    # Validation: checkpoint is required unless feedback-only mode
-    if args.checkpoint is None and not args.feedback:
-        print("Error: --checkpoint must be specified. Use --checkpoint /path/to/model.safetensors")
-        print("Example: python ableton_bridge.py --checkpoint ../models/model-gen.safetensors --in ARIA_IN --out ARIA_OUT")
-        sys.exit(1)
 
     if args.feedback:
         if args.data_dir is not None:
