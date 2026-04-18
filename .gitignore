@@ -175,3 +175,4 @@ _scripts
 tasks.md
 models/
 node_modules/
+build-local.ps1

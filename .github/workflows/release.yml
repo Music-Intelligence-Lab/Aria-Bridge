@@ -59,6 +59,13 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Cache electron-builder binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/electron-builder/cache
+          key: electron-builder-win-${{ hashFiles('front-end/package-lock.json') }}
+          restore-keys: electron-builder-win-
+
       - name: Install launcher dependencies
         working-directory: front-end
         run: npm install
@@ -84,10 +91,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$staging/models"   | Out-Null
           New-Item -ItemType Directory -Force -Path "$staging/feedback" | Out-Null
 
-          Copy-Item "dist/AriaLauncher.exe"        "$staging/AriaLauncher.exe"   -Force
-          Copy-Item "aria_backend.exe"             "$staging/aria_backend.exe"   -Force
-          Copy-Item "Aria Bridge.exe"              "$staging/Aria Bridge.exe"    -Force
-          Copy-Item "Aria Bridge.vst3"             "$staging/Aria Bridge.vst3"   -Recurse -Force
+          Copy-Item "dist/win-unpacked/*"          "$staging/"                   -Recurse -Force
           Copy-Item "real-time/ableton"            "$staging/ableton"            -Recurse -Force
           Copy-Item "README.md"                    "$staging/README.md"          -Force
           Set-Content "$staging/models/PUT_MODEL_HERE.txt" `
@@ -146,6 +150,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Cache electron-builder binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron-builder
+          key: electron-builder-mac-${{ hashFiles('front-end/package-lock.json') }}
+          restore-keys: electron-builder-mac-
 
       - name: Install launcher dependencies
         working-directory: front-end

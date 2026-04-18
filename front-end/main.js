@@ -13,7 +13,7 @@ let backendProcess = null;
 function userBase() {
     if (!app.isPackaged) return path.join(__dirname, '..');
     if (process.platform === 'darwin') return path.resolve(process.execPath, '../../../..');
-    return process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
+    return path.dirname(process.execPath);
 }
 
 // resourcesBase: where electron-builder places extraResources (bundled executables)
