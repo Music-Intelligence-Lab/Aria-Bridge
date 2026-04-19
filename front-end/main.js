@@ -186,7 +186,7 @@ function spawnBackend(mode, opts = {}) {
     // windowsHide: true prevents console window and stops the child from
     // inheriting Electron's open handle to app.asar (which would keep the
     // file locked even after Electron exits).
-    const base = { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], ...opts };
+    const base = { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], ...opts };
 
     if (app.isPackaged) {
         return spawn(backendExe(), args, base);

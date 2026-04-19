@@ -263,15 +263,6 @@ def _make_tray_icon():
     return img
 
 
-def _stdin_watchdog():
-    try:
-        while sys.stdin.buffer.read(1):
-            pass
-    except Exception:
-        pass
-    os._exit(0)
-
-
 def _start_backend_tray():
     try:
         import pystray
@@ -490,7 +481,6 @@ def main():
 
     args = parser.parse_args()
 
-    threading.Thread(target=_stdin_watchdog, daemon=True).start()
     _start_backend_tray()
 
     # Handle port listing early to avoid requiring checkpoint or other setup
