@@ -456,6 +456,8 @@ class ManualModeSession:
         self.recorded.clear()
         self._msg_count = 0
         self._note_on_count = 0
+        self.skip_pending_event.clear()
+        self.playback_cancel_event.clear()
         self.recording_flag.set()
         self.start_time = time.monotonic()
         logger.info(f"[manual] Recording started at {self.start_time:.3f}")
