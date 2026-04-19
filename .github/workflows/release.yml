@@ -96,7 +96,7 @@ jobs:
           Set-Content "$staging/models/PUT_MODEL_HERE.txt" `
             "Download model-gen.safetensors from HuggingFace and place it in this folder."
 
-          Compress-Archive -Path "$staging/*" -DestinationPath $zip
+          7z a -tzip $zip "$staging/*"
 
       - uses: actions/upload-artifact@v4
         with:
