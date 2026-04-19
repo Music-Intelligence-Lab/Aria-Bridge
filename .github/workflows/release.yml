@@ -43,11 +43,12 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install pyinstaller
+          pip install pyinstaller pystray pillow
+          pip install torch --index-url https://download.pytorch.org/whl/cu121
           pip install -r real-time/requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
 
       - name: Build aria_backend.exe
-        run: pyinstaller aria_backend.spec
+        run: python -m PyInstaller aria_backend.spec
         shell: powershell
 
       # aria_backend.exe already in dist/ from PyInstaller — no move needed
