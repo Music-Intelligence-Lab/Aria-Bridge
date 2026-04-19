@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
 datas = [('config', 'config')]
 binaries = []
@@ -8,10 +8,20 @@ hiddenimports = [
     'mido', 'mido.backends.rtmidi', 'rtmidi',
     'pythonosc', 'pythonosc.dispatcher', 'pythonosc.osc_server',
 ]
-tmp_ret = collect_all('aria')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('ariautils')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# aria / ariautils — collect_all silently returns empty if the package isn't
+# found by its distribution name, so also collect submodules explicitly.
+for _pkg in ('aria', 'ariautils'):
+    try:
+        tmp_ret = collect_all(_pkg)
+        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+    except Exception:
+        pass
+    try:
+        hiddenimports += collect_submodules(_pkg)
+        datas        += collect_data_files(_pkg)
+    except Exception:
+        pass
 try:
     tmp_ret = collect_all('pystray')
     datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
