@@ -161,6 +161,7 @@ cython_debug/
 #.idea/
 
 # Project specific
+MIDI Data Generated/
 Aria Bridge.exe
 Aria Bridge.vst3
 Aria Bridge.app
