@@ -36,6 +36,8 @@
     "mac": {
       "target": "zip",
       "artifactName": "AriaLauncher-mac.zip",
+      "identity": null,
+      "category": "public.app-category.music",
       "extraResources": [
         { "from": "../dist/aria_backend",    "to": "aria_backend",    "filter": ["**"] },
         { "from": "../dist/Aria Bridge.app", "to": "Aria Bridge.app", "filter": ["**"] },

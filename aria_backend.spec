@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
 from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
 datas = [('config', 'config')]
@@ -30,6 +31,17 @@ try:
 except Exception:
     pass
 
+# MLX (Apple Silicon GPU inference). Bundle its Metal kernels (.metallib) and
+# extensions explicitly — PyInstaller's static analysis misses them otherwise,
+# and aria.inference.model_mlx imports mlx.core lazily inside a function.
+if sys.platform == 'darwin':
+    try:
+        tmp_ret = collect_all('mlx')
+        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+        hiddenimports += collect_submodules('mlx')
+    except Exception:
+        pass
+
 import os
 _entry = os.path.join('real-time', 'ableton_bridge.py')
 
@@ -58,7 +70,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX corrupts Mach-O binaries and conflicts with codesigning on macOS.
+    upx=(sys.platform != 'darwin'),
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,

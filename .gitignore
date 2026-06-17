@@ -183,3 +183,5 @@ tasks.md
 models/
 node_modules/
 build-local.ps1
+STATUS.md
+CLAUDE.md
