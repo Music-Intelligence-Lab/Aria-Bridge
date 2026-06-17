@@ -4,14 +4,14 @@ Utility script (`generator.py`) to sweep sampling parameters over one or many pr
 
 ## Run (single prompt)
 ```powershell
-python Bulk Generation/generator.py `
+python "assets/Bulk Generation/generator.py" `
   --prompt "C:\path\to\prompt.mid" `
   --checkpoint "C:\path\to\model-gen.safetensors"
 ```
 
 ## Run (folder of prompts)
 ```powershell
-python Bulk Generation/generator.py `
+python "assets/Bulk Generation/generator.py" `
   --prompt_dir "C:\path\to\midi_folder" `
   --checkpoint "C:\path\to\model-gen.safetensors"
 ```

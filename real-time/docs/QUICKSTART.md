@@ -99,9 +99,9 @@ Use `--data-dir` to store recordings anywhere on your system:
 
 ## Next Steps
 
-- See [README.md](README.md) for full documentation
+- See [README.md](../README.md) for full documentation
 - Run `python ableton_bridge.py --help` for all options
-- Check [Troubleshooting](README.md#troubleshooting) if issues arise
+- Check [Troubleshooting](../README.md#troubleshooting) if issues arise
 
 ## Common Issues
 

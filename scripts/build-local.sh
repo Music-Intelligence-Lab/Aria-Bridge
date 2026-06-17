@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$HOME/Downloads/AriaBridge"
 SKIP_JUCE=0; SKIP_BACKEND=0; SKIP_FRONTEND=0
 
@@ -82,7 +82,7 @@ elif [ -f "$BACKEND_BIN" ]; then
     warn "dist/aria_backend found, skipping PyInstaller. Delete it to rebuild."
 else
     step "Building aria_backend (PyInstaller, bundles MLX/Metal)..."
-    ( cd "$ROOT" && pyinstaller aria_backend.spec )
+    ( cd "$ROOT" && pyinstaller scripts/aria_backend.spec )
     chmod +x "$BACKEND_BIN"
     rm -rf "$ROOT/build"   # PyInstaller work dir, not needed after build
 fi

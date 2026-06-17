@@ -48,7 +48,7 @@ jobs:
           pip install -r real-time/requirements.txt
 
       - name: Build aria_backend
-        run: pyinstaller aria_backend.spec
+        run: pyinstaller scripts/aria_backend.spec
 
       - name: Mark aria_backend executable
         run: chmod +x dist/aria_backend

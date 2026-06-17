@@ -344,7 +344,10 @@ real-time/
 ├── ableton_bridge.py       # Main entry point
 ├── requirements.txt
 ├── README.md
-├── QUICKSTART.md
+├── docs/
+│   ├── ARCHITECTURE.md     # Full code walkthrough + data flow
+│   ├── QUICKSTART.md       # Quick start guide
+│   └── TOKENS_AND_CLOCK.md # Tokens knob + clock-mode explainer
 ├── core/
 │   ├── aria_engine.py      # Model inference wrapper
 │   ├── bridge_engine.py    # Core orchestration (clock mode)
@@ -362,6 +365,7 @@ real-time/
 │   └── ui_panel.py         # Optional Tkinter UI
 ├── tools/
 │   ├── calibrate.py        # MIDI latency calibration
+│   ├── count_tokens.py     # Prompt token-length tester
 │   ├── sanity.py           # Testing & validation
 │   └── osc_sanity.py       # OSC debugging
 ├── ableton/
