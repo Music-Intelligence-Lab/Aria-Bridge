@@ -185,3 +185,10 @@ node_modules/
 STATUS.md
 CLAUDE.md
 TOKENS_AND_CLOCK.md
+ARIA_Model.pdf
+TEMPO_AND_TIMING.md
+
+# Local MIDI port-lister utility (double-click exe) and its build artifacts
+scripts/list_midi_ports.py
+list_midi_ports.exe
+build_midiports/

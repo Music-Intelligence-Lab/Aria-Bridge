@@ -11,6 +11,62 @@ import torch
 logger = logging.getLogger(__name__)
 
 
+def _strip_leading_notes(midi_obj, n_skip):
+    """Return a copy of ``midi_obj`` with the first ``n_skip`` sounded notes removed
+    and timing rebased so the next note starts at t=0.
+
+    Aria returns ``prompt + continuation``; detokenizing it yields the prompt notes
+    followed by the generated ones. Dropping the prompt notes makes playback start
+    immediately at what Aria generated instead of replaying the input.
+    """
+    import mido
+
+    if n_skip <= 0:
+        return midi_obj
+
+    merged = mido.merge_tracks(midi_obj.tracks)
+
+    # Absolute-time pass: locate the onset of the first note past the prompt.
+    abs_t = 0
+    notes_seen = 0
+    cutoff = None
+    events = []
+    for msg in merged:
+        abs_t += msg.time
+        events.append((abs_t, msg))
+        if msg.type == "note_on" and (msg.velocity or 0) > 0:
+            notes_seen += 1
+            if notes_seen == n_skip + 1 and cutoff is None:
+                cutoff = abs_t
+    if cutoff is None:
+        cutoff = abs_t  # generated <= prompt notes: nothing to keep after the prompt
+
+    # Carry forward tempo/meta/program set before the cutoff; rebase the rest to 0.
+    carried = []
+    kept = []
+    for abs_time, msg in events:
+        if msg.type == "end_of_track":
+            continue
+        if abs_time < cutoff:
+            if (msg.is_meta and msg.type in ("set_tempo", "time_signature", "key_signature")) \
+                    or msg.type == "program_change":
+                carried.append(msg)
+            continue
+        kept.append((abs_time, msg))
+
+    out = mido.MidiTrack()
+    for m in carried:
+        out.append(m.copy(time=0))
+    prev = cutoff
+    for abs_time, msg in kept:
+        out.append(msg.copy(time=abs_time - prev))
+        prev = abs_time
+
+    new_midi = mido.MidiFile(ticks_per_beat=midi_obj.ticks_per_beat)
+    new_midi.tracks.append(out)
+    return new_midi
+
+
 class AriaEngine:
     """
     Wraps Aria generation: loads model once, provides generate() method.
@@ -125,6 +181,10 @@ class AriaEngine:
                 tokenizer=self.tokenizer,
                 prompt_len_ms=int(1e3 * prompt_duration_s),
             )
+            # get_inference_prompt trims note_msgs in place to the prompt notes;
+            # the model returns prompt + continuation, so we drop this many leading
+            # notes from the output to play only what Aria generated.
+            n_prompt_notes = len(midi_dict.note_msgs)
 
             if max_new_tokens is None:
                 max_new_tokens = min(512, int(horizon_s * 200))
@@ -177,15 +237,22 @@ class AriaEngine:
             # Detokenize to MIDI dict and save to temp file
             if results:
                 tokenized_seq = results[0]
-                midi_dict = self.tokenizer.detokenize(tokenized_seq)
-                midi_obj = midi_dict.to_midi()
+                gen_midi_dict = self.tokenizer.detokenize(tokenized_seq)
+                midi_obj = gen_midi_dict.to_midi()
+
+                # Drop the prompt so playback starts at the generated continuation,
+                # not a replay of the input.
+                midi_obj = _strip_leading_notes(midi_obj, n_prompt_notes)
 
                 # Save to temp file
                 tmp = tempfile.NamedTemporaryFile(suffix='.mid', delete=False)
                 tmp.close()
                 midi_obj.save(tmp.name)
-                
-                logger.debug(f"Generated MIDI saved to {tmp.name}")
+
+                logger.debug(
+                    f"Generated MIDI saved to {tmp.name} "
+                    f"({n_prompt_notes} prompt notes stripped)"
+                )
                 return tmp.name
             else:
                 return None
