@@ -192,3 +192,4 @@ TEMPO_AND_TIMING.md
 scripts/list_midi_ports.py
 list_midi_ports.exe
 build_midiports/
+TRACK.mid

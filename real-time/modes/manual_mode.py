@@ -156,6 +156,15 @@ class ManualModeSession:
         osc_playback_duration_cb=None,
         play_gate: bool = False,
         feedback_manager=None,
+        clip_output: bool = False,
+        clip_track: int = 0,
+        clip_slot: int = 0,
+        clip_host: str = "127.0.0.1",
+        clip_port: int = 11000,
+        clip_replace: bool = True,
+        clip_fire: bool = True,
+        clip_set_tempo: bool = False,
+        clip_auto_advance: bool = False,
     ):
         self.in_port_name = in_port_name
         self.out_port_name = out_port_name
@@ -185,6 +194,18 @@ class ManualModeSession:
         # Gate playback to explicit PLAY command/key to keep manual + OSC paths consistent.
         self.play_gate = True
         self.feedback_manager = feedback_manager
+        # Opt-in: write generated MIDI into an Ableton clip (AbletonOSC) instead of
+        # streaming it out ARIA_OUT. Default off — leaves the normal path untouched.
+        self.clip_output = clip_output
+        self.clip_track = clip_track
+        self.clip_slot = clip_slot
+        self.clip_host = clip_host
+        self.clip_port = clip_port
+        self.clip_replace = clip_replace
+        self.clip_fire = clip_fire
+        self.clip_set_tempo = clip_set_tempo
+        self.clip_auto_advance = clip_auto_advance
+        self.clip_index = 0  # increments per written clip -> "Output 1", "Output 2", ...
         self.pending_output_path = None
         self._msg_count = 0
         self._note_on_count = 0
@@ -384,6 +405,40 @@ class ManualModeSession:
             self._log_ui("No pending output to play")
             logger.info("[manual] Play requested but no pending output.")
             return False
+        # Clip output (AbletonOSC): write the generated MIDI into an Ableton clip
+        # instead of streaming it out ARIA_OUT. Opt-in via --clip.
+        if self.clip_output:
+            from core.clip_output import send_midi_to_clip
+            self.clip_index += 1
+            clip_name = f"Output {self.clip_index}"
+            self._log_ui(f"Play -> writing clip '{clip_name}' via AbletonOSC")
+            n, used_slot = send_midi_to_clip(
+                path, track=self.clip_track, slot=self.clip_slot,
+                host=self.clip_host, port=self.clip_port,
+                replace=self.clip_replace, fire=self.clip_fire,
+                beats_per_bar=self.beats_per_bar, set_tempo=self.clip_set_tempo,
+                name=clip_name, auto_advance=self.clip_auto_advance,
+            )
+            msg = (f"Wrote clip '{clip_name}' ({n} notes) -> track {self.clip_track} slot {used_slot}"
+                   if n >= 0 else "Clip write failed (is AbletonOSC running?)")
+            logger.info(f"[manual] {msg}")
+            self._log_ui(msg)
+            if self.osc_log_cb:
+                self.osc_log_cb(msg)
+            if self.osc_playback_stopped_cb:
+                self.osc_playback_stopped_cb()
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+            self.pending_output_path = None
+            if self.session_state:
+                self.session_state.has_pending_output = False
+                self.session_state.set_status("IDLE")
+                self.session_state.set_last_output(None)
+            if self.osc_status_cb:
+                self.osc_status_cb("IDLE")
+            return True
         if not self.out_port:
             logger.warning("[manual] Play requested but output port is unavailable.")
             return False

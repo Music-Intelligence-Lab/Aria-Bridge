@@ -440,6 +440,21 @@ def main():
         action="store_true",
         help="Enable OSC control plane for Max for Live (optional, default off)",
     )
+    # --- Clip output (AbletonOSC): write generated MIDI into an Ableton clip on PLAY,
+    #     instead of streaming it out ARIA_OUT. Opt-in; leaves the default path untouched.
+    parser.add_argument(
+        "--clip",
+        action="store_true",
+        help="On PLAY, write generated MIDI into an Ableton clip via AbletonOSC instead of ARIA_OUT",
+    )
+    parser.add_argument("--track", type=int, default=0, help="--clip: target track index, 0-based (default 0)")
+    parser.add_argument("--slot", type=int, default=0, help="--clip: target clip slot index, 0-based (default 0)")
+    parser.add_argument("--clip-host", default="127.0.0.1", help="--clip: AbletonOSC host (default 127.0.0.1)")
+    parser.add_argument("--clip-port", type=int, default=11000, help="--clip: AbletonOSC receive port (default 11000)")
+    parser.add_argument("--no-clip-fire", action="store_true", help="--clip: do not auto-fire the clip after writing")
+    parser.add_argument("--no-clip-replace", action="store_true", help="--clip: do not delete an existing clip in the slot first")
+    parser.add_argument("--clip-tempo", action="store_true", help="--clip: set the Live Set tempo to the generated tempo (plays exactly as generated; changes global tempo)")
+    parser.add_argument("--clip-advance", action="store_true", help="--clip: if the target slot is occupied, write into the first empty slot below instead of overwriting")
     parser.add_argument(
         "--osc-host",
         default="127.0.0.1",
@@ -645,6 +660,15 @@ def main():
                 osc_playback_duration_cb=osc.send_playback_duration if osc else None,
                 play_gate=bool(args.m4l),
                 feedback_manager=feedback_manager,
+                clip_output=args.clip,
+                clip_track=args.track,
+                clip_slot=args.slot,
+                clip_host=args.clip_host,
+                clip_port=args.clip_port,
+                clip_replace=not args.no_clip_replace,
+                clip_fire=not args.no_clip_fire,
+                clip_set_tempo=args.clip_tempo,
+                clip_auto_advance=args.clip_advance,
             )
             if osc:
                 osc.cancel_playback_cb = session.playback_cancel_event.set
