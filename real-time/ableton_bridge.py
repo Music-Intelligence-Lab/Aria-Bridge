@@ -270,7 +270,23 @@ def _make_tray_icon():
     return img
 
 
+def _load_run_ui():
+    # The Tkinter panel (--ui) is optional and pulls in tkinter, which isn't always
+    # available (e.g. Homebrew Python without python-tk). Import it lazily so the
+    # other presets (plugin/m4l/automatic/manual) don't require Tk.
+    try:
+        from .ui.ui_panel import run_ui
+    except ImportError:
+        from ui.ui_panel import run_ui
+    return run_ui
+
+
 def _start_backend_tray():
+    # pystray's macOS (Cocoa) backend must run on the main thread; running it in a
+    # daemon thread aborts the process with SIGTRAP. The tray is a Windows-launcher
+    # nicety, so skip it on macOS rather than crash the backend.
+    if sys.platform == "darwin":
+        return
     try:
         import pystray
         icon = pystray.Icon(
@@ -544,7 +560,6 @@ def main():
             from .modes.manual_mode import ManualModeSession
             from .modes.sampling_hotkeys import start_sampling_hotkeys
             from .modes.osc_controller import OscController
-            from .ui.ui_panel import run_ui
             import_mode = "package"
         except ImportError:
             from core.midi_buffer import RollingMidiBuffer
@@ -555,7 +570,6 @@ def main():
             from modes.manual_mode import ManualModeSession
             from modes.sampling_hotkeys import start_sampling_hotkeys
             from modes.osc_controller import OscController
-            from ui.ui_panel import run_ui
             import_mode = "script"
 
         logger.debug(f"Import mode: {import_mode}")
@@ -697,6 +711,7 @@ def main():
                 osc.set_slot_cb = session.set_clip_slot
                 osc.set_fire_cb = session.set_clip_fire
             if args.ui:
+                run_ui = _load_run_ui()
                 session_thread = threading.Thread(target=session.run, daemon=True)
                 session_thread.start()
                 try:
@@ -738,6 +753,7 @@ def main():
         )
 
         if args.ui:
+            run_ui = _load_run_ui()
             bridge_thread = threading.Thread(target=bridge.run, daemon=True)
             bridge_thread.start()
             try:

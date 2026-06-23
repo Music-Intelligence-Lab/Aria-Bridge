@@ -84,12 +84,14 @@ class TempoTracker:
             avail = mido.get_input_names()
             if self.clock_port_name in avail:
                 return self.clock_port_name
-            
-            # Try prefix matching
-            matched = [p for p in avail if p.startswith(self.clock_port_name)]
+
+            # Prefer prefix (Windows loopMIDI), fall back to substring (macOS IAC names).
+            n = self.clock_port_name.lower()
+            matched = [p for p in avail if p.lower().startswith(n)] or \
+                      [p for p in avail if n in p.lower()]
             if matched:
                 return matched[0]
-            
+
             # Fallback to exact name (will error with helpful message)
             return self.clock_port_name
         except Exception:

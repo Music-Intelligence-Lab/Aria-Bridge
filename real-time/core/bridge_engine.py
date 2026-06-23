@@ -334,26 +334,30 @@ class AbletonBridge:
         except ImportError:
             raise ImportError("mido is required. Install with: pip install mido")
 
-        # Input port
+        # Input port — prefer prefix (Windows loopMIDI), fall back to substring (macOS IAC).
         available_in = mido.get_input_names()
-        matched_in = [p for p in available_in if p.lower().startswith(self.in_port_name.lower())]
+        _in = self.in_port_name.lower()
+        matched_in = [p for p in available_in if p.lower().startswith(_in)] or \
+                     [p for p in available_in if _in in p.lower()]
         if not matched_in:
             raise RuntimeError(
-                f"Could not find a MIDI input port starting with '{self.in_port_name}'. "
-                f"Make sure loopMIDI is running and the port is created. "
+                f"Could not find a MIDI input port matching '{self.in_port_name}'. "
+                f"On Windows make sure loopMIDI is running; on macOS enable the IAC Driver. "
                 f"Available ports: {available_in}"
             )
         in_port_name = matched_in[0]
         self.in_port = mido.open_input(in_port_name)
         logger.info(f"Input port opened: {in_port_name}")
 
-        # Output port
+        # Output port — same prefix-then-substring matching.
         available_out = mido.get_output_names()
-        matched_out = [p for p in available_out if p.lower().startswith(self.out_port_name.lower())]
+        _out = self.out_port_name.lower()
+        matched_out = [p for p in available_out if p.lower().startswith(_out)] or \
+                      [p for p in available_out if _out in p.lower()]
         if not matched_out:
             raise RuntimeError(
-                f"Could not find a MIDI output port starting with '{self.out_port_name}'. "
-                f"Make sure loopMIDI is running and the port is created. "
+                f"Could not find a MIDI output port matching '{self.out_port_name}'. "
+                f"On Windows make sure loopMIDI is running; on macOS enable the IAC Driver. "
                 f"Available ports: {available_out}"
             )
         out_port_name = matched_out[0]

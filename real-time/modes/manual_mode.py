@@ -241,16 +241,20 @@ class ManualModeSession:
 
     @staticmethod
     def _resolve_port(name: str, kind: str) -> str:
-        """Return the first port whose name starts with 'name' (case-insensitive)."""
+        """Return the first port matching 'name' (case-insensitive). Prefers a prefix
+        match (Windows loopMIDI 'ARIA_IN 3') but falls back to a substring match so
+        macOS IAC names ('IAC Driver ARIA_IN') also resolve."""
         import mido
         available = mido.get_input_names() if kind == "input" else mido.get_output_names()
-        matched = [p for p in available if p.lower().startswith(name.lower())]
+        n = name.lower()
+        matched = [p for p in available if p.lower().startswith(n)] or \
+                  [p for p in available if n in p.lower()]
         if matched:
             return matched[0]
         raise RuntimeError(
-            f"Could not find a MIDI {kind} port starting with '{name}'. "
-            f"Make sure loopMIDI is running and the port is created. "
-            f"Available ports: {available}"
+            f"Could not find a MIDI {kind} port matching '{name}'. "
+            f"On Windows make sure loopMIDI is running; on macOS enable the IAC Driver "
+            f"and add the port in Audio MIDI Setup. Available ports: {available}"
         )
 
     def _open_ports(self) -> None:
