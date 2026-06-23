@@ -12,7 +12,7 @@ $Root = (Resolve-Path "$PSScriptRoot\..").Path
 $GD   = Join-Path $Root ".aria-context.git"
 function Ctx { & git --git-dir="$GD" --work-tree="$Root" @args }
 
-$Files = @("CLAUDE.md","STATUS.md","tasks.md","ARIA_Model.pdf",
+$Files = @("CLAUDE.md","STATUS.md","SYNC.md","tasks.md","ARIA_Model.pdf",
   "real-time/docs/TEMPO_AND_TIMING.md","real-time/docs/TOKENS_AND_CLOCK.md",
   "real-time/tools/count_tokens.py","real-time/tools/midi_to_clip.py",
   "scripts/list_midi_ports.py","real-time/tests/Track.mid",".claude-sessions")

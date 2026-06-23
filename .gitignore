@@ -197,3 +197,4 @@ TRACK.mid
 # Private "context" sync repo (separate git dir over this same worktree) + synced sessions
 .aria-context.git/
 .claude-sessions/
+SYNC.md
