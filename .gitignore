@@ -193,3 +193,7 @@ scripts/list_midi_ports.py
 list_midi_ports.exe
 build_midiports/
 TRACK.mid
+
+# Private "context" sync repo (separate git dir over this same worktree) + synced sessions
+.aria-context.git/
+.claude-sessions/
