@@ -163,6 +163,13 @@ def sync_state_on_startup(osc_controller, timeout: float = 2.0):
         return None
 
 
+def _synced_or(startup_state, key, default):
+    """Return the value Max pushed at startup sync, falling back to the CLI default."""
+    if startup_state and startup_state.get(key) is not None:
+        return startup_state[key]
+    return default
+
+
 class FeedbackManager:
     def __init__(self, datastore: DataStore):
         self.datastore = datastore
@@ -586,7 +593,9 @@ def main():
                 t = startup_state.get('temp', 0)
                 tp = startup_state.get('top_p', 0)
                 tok = startup_state.get('tokens', 0)
-                print(f"STATUS:synced:temp={t:.2f} top_p={tp:.2f} tokens={tok}", flush=True)
+                trk = _synced_or(startup_state, 'track', args.track)
+                slt = _synced_or(startup_state, 'slot', args.slot)
+                print(f"STATUS:synced:temp={t:.2f} top_p={tp:.2f} tokens={tok} track={trk} slot={slt}", flush=True)
 
         # Resolve device (auto-detect if not specified)
         if args.device is None:
@@ -666,8 +675,8 @@ def main():
                 play_gate=bool(args.m4l),
                 feedback_manager=feedback_manager,
                 clip_output=args.clip or args.loop,
-                clip_track=args.track,
-                clip_slot=args.slot,
+                clip_track=_synced_or(startup_state, "track", args.track),
+                clip_slot=_synced_or(startup_state, "slot", args.slot),
                 clip_host=args.clip_host,
                 clip_port=args.clip_port,
                 clip_replace=not args.no_clip_replace,

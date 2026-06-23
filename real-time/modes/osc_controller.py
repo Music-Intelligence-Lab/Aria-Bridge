@@ -50,12 +50,16 @@ class OscController:
             "top_p": threading.Event(),
             "min_p": threading.Event(),
             "tokens": threading.Event(),
+            "track": threading.Event(),
+            "slot": threading.Event(),
         }
         self._startup_state: Dict[str, Optional[float]] = {
             "temp": None,
             "top_p": None,
             "min_p": None,
             "tokens": None,
+            "track": None,
+            "slot": None,
         }
         self._debug_enabled = False
 
@@ -144,6 +148,8 @@ class OscController:
                 "top_p": top_p,
                 "min_p": min_p,
                 "tokens": self.session_state.get_max_tokens(),
+                "track": None,
+                "slot": None,
             }
 
         # Default state falls back to current values; overwritten on success
@@ -153,6 +159,8 @@ class OscController:
             "top_p": base_top_p,
             "min_p": base_min_p,
             "tokens": self.session_state.get_max_tokens(),
+            "track": None,
+            "slot": None,
         }
 
         try:
@@ -175,6 +183,8 @@ class OscController:
                     if snapshot["tokens"] is not None
                     else self.session_state.get_max_tokens()
                 ),
+                "track": int(snapshot["track"]) if snapshot["track"] is not None else None,
+                "slot": int(snapshot["slot"]) if snapshot["slot"] is not None else None,
             }
 
             if missing:
@@ -358,6 +368,7 @@ class OscController:
         except (TypeError, ValueError):
             return
         logger.info(f"[OSC] track -> {val}")
+        self._record_startup_value("track", val)
         print(f"STATUS:param:track:{val}", flush=True)
         if self.set_track_cb:
             self.set_track_cb(val)
@@ -370,6 +381,7 @@ class OscController:
         except (TypeError, ValueError):
             return
         logger.info(f"[OSC] slot -> {val}")
+        self._record_startup_value("slot", val)
         print(f"STATUS:param:slot:{val}", flush=True)
         if self.set_slot_cb:
             self.set_slot_cb(val)
