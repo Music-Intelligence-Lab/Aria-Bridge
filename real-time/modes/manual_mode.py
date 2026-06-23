@@ -211,6 +211,7 @@ class ManualModeSession:
         self.loop_mode = loop_mode
         self.loop_buffer = loop_buffer
         self.loop_max_slot = loop_max_slot
+        self.loop_running = False
         self.clip_index = 0  # increments per written clip -> "Output 1", "Output 2", ...
         self.pending_output_path = None
         self._msg_count = 0
@@ -529,6 +530,45 @@ class ManualModeSession:
         if self.osc_status_cb:
             self.osc_status_cb("RECORDING")
 
+    # --- Live control setters (wired to OSC handlers; safe to call from the OSC thread) ---
+    def set_clip_output(self, on):
+        on = bool(on)
+        self.clip_output = on
+        if not on and self.loop_mode:
+            self.loop_mode = False           # loop can't run without clip output
+            if self.loop_running:
+                self.generation_cancel_event.set()
+        self._log_ui(f"Clip output {'ON' if on else 'OFF'}")
+
+    def set_loop_mode(self, on):
+        on = bool(on)
+        if on and not self.clip_output:
+            self._log_ui("Loop needs Clip ON — ignored")
+            logger.info("[ctrl] loop-on ignored (clip output off)")
+            return
+        self.loop_mode = on
+        if not on and self.loop_running:
+            self.generation_cancel_event.set()   # stop a running loop
+        self._log_ui(f"Loop {'ARMED (press Record to start)' if on else 'OFF'}")
+
+    def set_clip_track(self, n):
+        try:
+            self.clip_track = int(n)
+        except (TypeError, ValueError):
+            return
+        self._log_ui(f"Clip track -> {self.clip_track}")
+
+    def set_clip_slot(self, n):
+        try:
+            self.clip_slot = int(n)
+        except (TypeError, ValueError):
+            return
+        self._log_ui(f"Clip slot -> {self.clip_slot}")
+
+    def set_clip_fire(self, on):
+        self.clip_fire = bool(on)
+        self._log_ui(f"Fire-on-write {'ON' if self.clip_fire else 'OFF'}")
+
     def _run_clip_loop(self, first_output_path, temp, top_p, min_p, tokens):
         """Self-feeding clip loop: write the latest output as a clip, then generate the
         next from it (whole output as prompt), stacking down the column.
@@ -557,7 +597,8 @@ class ManualModeSession:
         slot = start_slot
         prompt_path = first_output_path  # Output 1 = continuation of the recorded seed
         idx = 0
-        self._log_ui(f"Loop started -> slots {start_slot}..{max_slot}, buffer {self.loop_buffer}")
+        self.loop_running = True
+        self._log_ui(f"Loop started -> slots {start_slot}..{max_slot} (free-run)")
         if self.session_state:
             self.session_state.set_status("GENERATING")
         try:
@@ -566,25 +607,15 @@ class ManualModeSession:
                     self._log_ui(f"Loop reached bottom slot {max_slot}; stopping.")
                     break
 
-                # Pace: keep at most loop_buffer clips written ahead of what's playing.
-                while not cancelled():
-                    playing = osc.get_playing_slot_index(self.clip_track)
-                    ref = playing if playing >= start_slot else (start_slot - 1)
-                    ahead = (slot - 1) - ref
-                    if ahead < self.loop_buffer:
-                        break
-                    time.sleep(0.2)
-                if cancelled():
-                    break
-
-                # Write the current output into the next slot (no fire).
+                # Write the current output into the next slot. Fire only if the
+                # fire-on-write toggle is on (default: you launch clips yourself).
                 idx += 1
                 name = f"Output {idx}"
                 try:
                     n = osc.write_clip(
                         prompt_path, self.clip_track, slot, name=name,
                         beats_per_bar=self.beats_per_bar, set_tempo=self.clip_set_tempo,
-                        replace=self.clip_replace, fire=False,
+                        replace=self.clip_replace, fire=self.clip_fire,
                     )
                     self._log_ui(f"Loop wrote '{name}' ({n} notes) -> slot {slot}")
                     if self.osc_log_cb:
@@ -614,6 +645,7 @@ class ManualModeSession:
                     break
                 prompt_path = nxt
         finally:
+            self.loop_running = False
             try:
                 os.unlink(prompt_path)
             except Exception:

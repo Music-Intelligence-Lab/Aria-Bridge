@@ -671,7 +671,8 @@ def main():
                 clip_host=args.clip_host,
                 clip_port=args.clip_port,
                 clip_replace=not args.no_clip_replace,
-                clip_fire=not args.no_clip_fire,
+                # Loop defaults to hands-free (no auto-fire); single-clip keeps firing.
+                clip_fire=False if args.loop else (not args.no_clip_fire),
                 clip_set_tempo=args.clip_tempo,
                 clip_auto_advance=args.clip_advance,
                 loop_mode=args.loop,
@@ -681,6 +682,11 @@ def main():
             if osc:
                 osc.cancel_playback_cb = session.playback_cancel_event.set
                 osc.generation_cancel_cb = session.generation_cancel_event.set
+                osc.set_clip_cb = session.set_clip_output
+                osc.set_loop_cb = session.set_loop_mode
+                osc.set_track_cb = session.set_clip_track
+                osc.set_slot_cb = session.set_clip_slot
+                osc.set_fire_cb = session.set_clip_fire
             if args.ui:
                 session_thread = threading.Thread(target=session.run, daemon=True)
                 session_thread.start()

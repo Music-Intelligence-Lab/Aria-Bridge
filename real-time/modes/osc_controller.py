@@ -32,6 +32,12 @@ class OscController:
         self.feedback_param_cb = feedback_param_cb
         self.cancel_playback_cb = None
         self.generation_cancel_cb = None
+        # Clip / loop control callbacks (wired by the bridge to session setters).
+        self.set_clip_cb = None
+        self.set_loop_cb = None
+        self.set_track_cb = None
+        self.set_slot_cb = None
+        self.set_fire_cb = None
         self.server = None
         self.client = None
         self.stop_event = threading.Event()
@@ -67,6 +73,11 @@ class OscController:
         disp.map("/aria/min_p", self._handle_min_p)
         disp.map("/aria/tokens", self._handle_tokens)
         disp.map("/aria/cancel", self._handle_cancel)
+        disp.map("/aria/clip", self._handle_clip)
+        disp.map("/aria/loop", self._handle_loop)
+        disp.map("/aria/track", self._handle_track)
+        disp.map("/aria/slot", self._handle_slot)
+        disp.map("/aria/fire", self._handle_fire)
         disp.map("/cancel_playback", self._handle_cancel_playback)
         disp.map("/aria/ping", self._handle_ping)
         disp.map("/aria/play", self._handle_play)
@@ -320,6 +331,57 @@ class OscController:
             self.generation_cancel_cb()
         self.command_queue.put(("cancel", 1))
         self.send_log("Cancel requested (OSC)")
+
+    def _handle_clip(self, addr, *args):
+        flag = self._coerce_flag(args[0]) if args else None
+        if flag is None:
+            return
+        logger.info(f"[OSC] clip -> {flag}")
+        print(f"STATUS:param:clip:{flag}", flush=True)
+        if self.set_clip_cb:
+            self.set_clip_cb(flag)
+
+    def _handle_loop(self, addr, *args):
+        flag = self._coerce_flag(args[0]) if args else None
+        if flag is None:
+            return
+        logger.info(f"[OSC] loop -> {flag}")
+        print(f"STATUS:param:loop:{flag}", flush=True)
+        if self.set_loop_cb:
+            self.set_loop_cb(flag)
+
+    def _handle_track(self, addr, *args):
+        if not args:
+            return
+        try:
+            val = int(round(float(args[0])))
+        except (TypeError, ValueError):
+            return
+        logger.info(f"[OSC] track -> {val}")
+        print(f"STATUS:param:track:{val}", flush=True)
+        if self.set_track_cb:
+            self.set_track_cb(val)
+
+    def _handle_slot(self, addr, *args):
+        if not args:
+            return
+        try:
+            val = int(round(float(args[0])))
+        except (TypeError, ValueError):
+            return
+        logger.info(f"[OSC] slot -> {val}")
+        print(f"STATUS:param:slot:{val}", flush=True)
+        if self.set_slot_cb:
+            self.set_slot_cb(val)
+
+    def _handle_fire(self, addr, *args):
+        flag = self._coerce_flag(args[0]) if args else None
+        if flag is None:
+            return
+        logger.info(f"[OSC] fire -> {flag}")
+        print(f"STATUS:param:fire:{flag}", flush=True)
+        if self.set_fire_cb:
+            self.set_fire_cb(flag)
 
     def _handle_cancel_playback(self, addr, *args):
         logger.info("[OSC] /cancel_playback received — stopping MIDI feed")
