@@ -455,6 +455,11 @@ def main():
     parser.add_argument("--no-clip-replace", action="store_true", help="--clip: do not delete an existing clip in the slot first")
     parser.add_argument("--clip-tempo", action="store_true", help="--clip: set the Live Set tempo to the generated tempo (plays exactly as generated; changes global tempo)")
     parser.add_argument("--clip-advance", action="store_true", help="--clip: if the target slot is occupied, write into the first empty slot below instead of overwriting")
+    # --- Infinite clip-loop: seed once (record), then feed each output back as the next
+    #     prompt, stacking clips down the column. You launch clips in Ableton; Cancel stops.
+    parser.add_argument("--loop", action="store_true", help="Infinite clip loop: feed each generated output back as the next prompt, writing clips down the column (implies --clip)")
+    parser.add_argument("--loop-buffer", type=int, default=4, help="--loop: how many clips to keep generated ahead of the playing slot (default 4)")
+    parser.add_argument("--loop-max-slot", type=int, default=7, help="--loop: bottom slot to stop at if Live's scene count is unavailable (default 7)")
     parser.add_argument(
         "--osc-host",
         default="127.0.0.1",
@@ -660,7 +665,7 @@ def main():
                 osc_playback_duration_cb=osc.send_playback_duration if osc else None,
                 play_gate=bool(args.m4l),
                 feedback_manager=feedback_manager,
-                clip_output=args.clip,
+                clip_output=args.clip or args.loop,
                 clip_track=args.track,
                 clip_slot=args.slot,
                 clip_host=args.clip_host,
@@ -669,6 +674,9 @@ def main():
                 clip_fire=not args.no_clip_fire,
                 clip_set_tempo=args.clip_tempo,
                 clip_auto_advance=args.clip_advance,
+                loop_mode=args.loop,
+                loop_buffer=args.loop_buffer,
+                loop_max_slot=args.loop_max_slot,
             )
             if osc:
                 osc.cancel_playback_cb = session.playback_cancel_event.set

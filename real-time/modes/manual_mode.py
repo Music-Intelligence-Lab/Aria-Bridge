@@ -165,6 +165,9 @@ class ManualModeSession:
         clip_fire: bool = True,
         clip_set_tempo: bool = False,
         clip_auto_advance: bool = False,
+        loop_mode: bool = False,
+        loop_buffer: int = 4,
+        loop_max_slot: int = 7,
     ):
         self.in_port_name = in_port_name
         self.out_port_name = out_port_name
@@ -205,6 +208,9 @@ class ManualModeSession:
         self.clip_fire = clip_fire
         self.clip_set_tempo = clip_set_tempo
         self.clip_auto_advance = clip_auto_advance
+        self.loop_mode = loop_mode
+        self.loop_buffer = loop_buffer
+        self.loop_max_slot = loop_max_slot
         self.clip_index = 0  # increments per written clip -> "Output 1", "Output 2", ...
         self.pending_output_path = None
         self._msg_count = 0
@@ -523,6 +529,106 @@ class ManualModeSession:
         if self.osc_status_cb:
             self.osc_status_cb("RECORDING")
 
+    def _run_clip_loop(self, first_output_path, temp, top_p, min_p, tokens):
+        """Self-feeding clip loop: write the latest output as a clip, then generate the
+        next from it (whole output as prompt), stacking down the column.
+
+        - buffer of self.loop_buffer clips ahead of the currently-playing slot,
+        - no fire (the user launches clips in Ableton),
+        - same sampling params for every generation,
+        - stops on Cancel (generation_cancel_event / cancel_event) or at the bottom slot.
+        """
+        from core.clip_output import AbletonOSCClient
+
+        osc = AbletonOSCClient(self.clip_host, self.clip_port)
+        start_slot = self.clip_slot
+        # Bottom of the column: prefer Live's actual scene count, else the CLI cap.
+        num_scenes = osc.get_num_scenes()
+        max_slot = (num_scenes - 1) if num_scenes else self.loop_max_slot
+
+        self.generation_cancel_event.clear()
+        self.skip_pending_event.clear()
+
+        def cancelled():
+            return (self.cancel_event.is_set()
+                    or self.generation_cancel_event.is_set()
+                    or self.skip_pending_event.is_set())
+
+        slot = start_slot
+        prompt_path = first_output_path  # Output 1 = continuation of the recorded seed
+        idx = 0
+        self._log_ui(f"Loop started -> slots {start_slot}..{max_slot}, buffer {self.loop_buffer}")
+        if self.session_state:
+            self.session_state.set_status("GENERATING")
+        try:
+            while not cancelled():
+                if slot > max_slot:
+                    self._log_ui(f"Loop reached bottom slot {max_slot}; stopping.")
+                    break
+
+                # Pace: keep at most loop_buffer clips written ahead of what's playing.
+                while not cancelled():
+                    playing = osc.get_playing_slot_index(self.clip_track)
+                    ref = playing if playing >= start_slot else (start_slot - 1)
+                    ahead = (slot - 1) - ref
+                    if ahead < self.loop_buffer:
+                        break
+                    time.sleep(0.2)
+                if cancelled():
+                    break
+
+                # Write the current output into the next slot (no fire).
+                idx += 1
+                name = f"Output {idx}"
+                try:
+                    n = osc.write_clip(
+                        prompt_path, self.clip_track, slot, name=name,
+                        beats_per_bar=self.beats_per_bar, set_tempo=self.clip_set_tempo,
+                        replace=self.clip_replace, fire=False,
+                    )
+                    self._log_ui(f"Loop wrote '{name}' ({n} notes) -> slot {slot}")
+                    if self.osc_log_cb:
+                        self.osc_log_cb(f"Loop '{name}' -> slot {slot}")
+                except Exception as e:
+                    logger.exception(f"[loop] clip write failed: {e}")
+                    self._log_ui("Loop clip write failed (is AbletonOSC running?)")
+                    break
+                slot += 1
+
+                # Generate the next output from the whole previous output.
+                out_seconds = self._midi_stats(prompt_path)[1]
+                nxt = self.aria_engine.generate(
+                    prompt_midi_path=prompt_path,
+                    prompt_duration_s=max(1, int(out_seconds) + 1),
+                    horizon_s=self.gen_seconds,
+                    temperature=temp, top_p=top_p, min_p=min_p,
+                    max_new_tokens=tokens,
+                )
+                # The prompt's notes are now in Ableton; drop the temp file.
+                try:
+                    os.unlink(prompt_path)
+                except Exception:
+                    pass
+                if not nxt:
+                    self._log_ui("Loop generation returned nothing; stopping.")
+                    break
+                prompt_path = nxt
+        finally:
+            try:
+                os.unlink(prompt_path)
+            except Exception:
+                pass
+            osc.close()
+            self.generation_cancel_event.clear()
+            self.skip_pending_event.clear()
+            if self.session_state:
+                self.session_state.has_pending_output = False
+                self.session_state.set_status("IDLE")
+                self.session_state.set_last_output(None)
+            if self.osc_status_cb:
+                self.osc_status_cb("IDLE")
+            self._log_ui("Loop stopped — ready to record again.")
+
     def _finish_recording_and_generate(self):
         """Stop, generate, and arm playback (prompting for 'p')."""
         self.recording_flag.clear()
@@ -687,6 +793,13 @@ class ManualModeSession:
             return
 
         self._capture_feedback(prompt_midi_path, generated_path, temp, top_p, min_p, tokens)
+
+        # Infinite clip-loop: feed each output back as the next prompt, writing clips
+        # down the column (no fire — you launch them). Buffer of N ahead of the playing
+        # slot; stops at Cancel or the bottom slot. Bypasses the normal play-gate.
+        if self.loop_mode and self.clip_output:
+            self._run_clip_loop(generated_path, temp, top_p, min_p, tokens)
+            return
 
         if self.play_gate:
             self.pending_output_path = generated_path

@@ -118,6 +118,100 @@ def extract_notes(midi_path):
     return notes, end_beat, bpm
 
 
+class AbletonOSCClient:
+    """Persistent AbletonOSC client with a reply listener — for the loop driver,
+    which needs to both send (write clips) and read state (which clip is playing).
+
+    Owns the reply port (11001) for its lifetime, so don't run the function-based
+    helpers (which also bind it) while an instance is alive. Call close() when done.
+    """
+
+    def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, recv_port=RECV_PORT):
+        from pythonosc import udp_client, dispatcher, osc_server
+        import threading
+
+        self._replies = {}
+        self._lock = threading.Lock()
+        self.client = udp_client.SimpleUDPClient(host, port)
+        disp = dispatcher.Dispatcher()
+        disp.set_default_handler(self._on_reply)
+        self.server = None
+        try:
+            self.server = osc_server.ThreadingOSCUDPServer((host, recv_port), disp)
+            threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        except Exception as e:
+            logger.warning(f"AbletonOSCClient: no reply listener on {recv_port}: {e}")
+
+    def _on_reply(self, addr, *args):
+        with self._lock:
+            self._replies[addr] = args
+
+    def send(self, addr, args):
+        self.client.send_message(addr, args)
+
+    def query(self, addr, args, timeout=0.4):
+        import time
+        with self._lock:
+            self._replies.pop(addr, None)
+        self.client.send_message(addr, args)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                if addr in self._replies:
+                    return self._replies[addr]
+            time.sleep(0.01)
+        return None
+
+    def get_playing_slot_index(self, track):
+        """Currently playing clip slot on the track, or -1 if none."""
+        r = self.query("/live/track/get/playing_slot_index", [int(track)])
+        if r and len(r) >= 2:
+            try:
+                return int(r[-1])
+            except (ValueError, TypeError):
+                return -1
+        return -1
+
+    def get_num_scenes(self):
+        r = self.query("/live/song/get/num_scenes", [])
+        if r:
+            try:
+                return int(r[-1])
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def write_clip(self, midi_path, track, slot, name=None, beats_per_bar=4,
+                   set_tempo=False, replace=True, fire=False):
+        """Write a .mid into (track, slot). Send-only (uses this client's socket)."""
+        notes, end_beat, bpm = extract_notes(midi_path)
+        bpb = beats_per_bar if beats_per_bar and beats_per_bar > 0 else 4
+        length_beats = max(bpb, math.ceil(end_beat / bpb) * bpb)
+        if set_tempo:
+            self.client.send_message("/live/song/set/tempo", [float(bpm)])
+        if replace:
+            self.client.send_message("/live/clip_slot/delete_clip", [track, slot])
+        self.client.send_message("/live/clip_slot/create_clip", [track, slot, float(length_beats)])
+        if name:
+            self.client.send_message("/live/clip/set/name", [track, slot, str(name)])
+        for i in range(0, len(notes), NOTES_PER_MSG):
+            chunk = notes[i:i + NOTES_PER_MSG]
+            flat = [track, slot]
+            for (pitch, start, dur, vel, mute) in chunk:
+                flat += [int(pitch), float(start), float(dur), int(vel), int(mute)]
+            self.client.send_message("/live/clip/add/notes", flat)
+        if fire:
+            self.client.send_message("/live/clip/fire", [track, slot])
+        return len(notes)
+
+    def close(self):
+        if self.server:
+            try:
+                self.server.shutdown()
+            except Exception:
+                pass
+
+
 def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAULT_PORT,
                       replace=True, fire=True, beats_per_bar=4, set_tempo=False, name=None,
                       auto_advance=False):
