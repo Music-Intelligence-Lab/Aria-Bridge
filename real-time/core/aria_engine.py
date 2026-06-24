@@ -145,6 +145,90 @@ class AriaEngine:
             logger.error(f"Failed to load model: {e}")
             raise
 
+    def _sample_batch_mlx(self, prompt, max_new_tokens, temp, top_p, min_p):
+        """MLX sampling driven from the bridge (O(n) KV-cache decode).
+
+        Mirrors aria's ``sample_batch`` but calls the model directly so we can pass
+        ``max_kv_pos`` (the vendored ``prefill``/``decode_one`` omit it, which crashes
+        on ``max_kv_pos + 1``). Prefill the prompt once, then decode one token at a
+        time against the cache. Correct + fast now that the RoPE layout bug in
+        ``model_mlx.apply_rotary_emb_mlx`` is fixed. Reuses aria's pure samplers.
+        """
+        import mlx.core as mx
+        from tqdm import tqdm
+        from aria.inference.sample_mlx import (
+            sample_top_p_mlx,
+            sample_min_p_mlx,
+            update_seq_ids_,
+        )
+
+        tok = self.tokenizer
+        model = self.model
+        model.eval()
+        prompt_len = len(prompt)
+        total_len = prompt_len + max_new_tokens
+        seq = mx.stack(
+            [
+                mx.array(
+                    tok.encode(prompt + [tok.pad_tok] * (total_len - prompt_len)),
+                    dtype=mx.int32,
+                )
+            ]
+        )
+        model.setup_cache(batch_size=1, max_seq_len=total_len, dtype=mx.float32)
+        dim_tok_inserted = [False]
+        eos_tok_seen = [False]
+        # tqdm bar = the terminal "generating" progress slider.
+        for idx in tqdm(
+            range(prompt_len, total_len),
+            total=total_len - prompt_len,
+            desc="Generating",
+            leave=False,
+        ):
+            if idx == prompt_len:
+                # Prefill the whole prompt; populates the KV cache for 0..idx-1.
+                logits = model(
+                    idxs=seq[:, :idx],
+                    input_pos=mx.arange(0, idx, dtype=mx.int32),
+                    offset=0,
+                    max_kv_pos=idx - 1,
+                )[:, -1]
+            else:
+                # Single-token decode against the cache (offset = current position).
+                logits = model(
+                    idxs=seq[:, idx - 1 : idx],
+                    input_pos=mx.array([idx - 1], dtype=mx.int32),
+                    offset=idx - 1,
+                    max_kv_pos=idx - 1,
+                )[:, -1]
+
+            if temp > 0.0:
+                probs = mx.softmax(logits / temp, axis=-1)
+                if min_p is not None:
+                    next_token_ids = sample_min_p_mlx(probs, min_p).flatten()
+                else:
+                    next_token_ids = sample_top_p_mlx(probs, top_p).flatten()
+            else:
+                next_token_ids = mx.argmax(logits, axis=-1).flatten()
+
+            update_seq_ids_(
+                seq=seq,
+                idx=idx,
+                next_token_ids=next_token_ids,
+                dim_tok_inserted=dim_tok_inserted,
+                eos_tok_seen=eos_tok_seen,
+                max_len=total_len,
+                force_end=False,
+                tokenizer=tok,
+            )
+            if all(eos_tok_seen):
+                break
+
+        decoded = tok.decode(seq[0].tolist())
+        if tok.eos_tok in decoded:
+            decoded = decoded[: decoded.index(tok.eos_tok) + 1]
+        return [decoded]
+
     def generate(
         self,
         prompt_midi_path: str,
@@ -203,15 +287,10 @@ class AriaEngine:
             # Sample — route to the correct backend
             start_time = time.time()
             if self.device == "mlx":
-                from aria.inference.sample_mlx import sample_batch
-                results = sample_batch(
-                    model=self.model,
-                    tokenizer=self.tokenizer,
+                results = self._sample_batch_mlx(
                     prompt=prompt,
-                    num_variations=1,
                     max_new_tokens=max_new_tokens,
                     temp=temperature,
-                    force_end=False,
                     top_p=top_p,
                     min_p=min_p,
                 )

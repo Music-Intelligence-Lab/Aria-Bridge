@@ -30,8 +30,11 @@ class _GenerationCanceled(Exception):
 class KeyboardToggle:
     """Minimal keyboard listener that works on Windows-first, with fallbacks."""
 
-    def __init__(self, key: str = "r"):
+    def __init__(self, key: str = "r", osc_driven: bool = False):
         self.key = key
+        # When recording is driven over OSC (m4l/UI), the keyboard fallback should
+        # idle instead of blocking on stdin / echoing a "press Enter" prompt.
+        self.osc_driven = osc_driven
         self.backend = self._detect_backend()
 
     def _detect_backend(self) -> str:
@@ -71,11 +74,18 @@ class KeyboardToggle:
                             return True
                     time.sleep(0.05)
                 return False
+            # stdin fallback (macOS/Linux without the `keyboard` module).
+            if self.osc_driven:
+                # OSC drives start/stop; just idle until canceled. No second print,
+                # no blocking stdin read, no leaked input() thread per record cycle.
+                while not cancel_event.is_set():
+                    time.sleep(0.1)
+                return False
             if cancel_event.is_set():
                 return False
-            input(f"{message} (press Enter to continue)")
+            input("(press Enter to continue)")
             return True
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             cancel_event.set()
             return False
 
@@ -181,7 +191,7 @@ class ManualModeSession:
         self.max_new_tokens = max_new_tokens
         # Default play key to 'p' so manual playback always available (even if flag omitted).
         self.play_key = play_key or "p"
-        self.play_toggle = KeyboardToggle(self.play_key)
+        self.play_toggle = KeyboardToggle(self.play_key, osc_driven=bool(command_queue))
         self.sampling_state = sampling_state
         self.command_queue = command_queue
         self.log_queue = log_queue
@@ -227,7 +237,7 @@ class ManualModeSession:
         self.start_time: Optional[float] = None
         self.stop_time: Optional[float] = None
 
-        self.toggle = KeyboardToggle(manual_key)
+        self.toggle = KeyboardToggle(manual_key, osc_driven=bool(command_queue))
         self.in_port = None
         self.out_port = None
         self.midi_thread = None
@@ -835,6 +845,16 @@ class ManualModeSession:
         # slot; stops at Cancel or the bottom slot. Bypasses the normal play-gate.
         if self.loop_mode and self.clip_output:
             self._run_clip_loop(generated_path, temp, top_p, min_p, tokens)
+            return
+
+        # Clip output (no loop): writing the clip IS the output action, so do it
+        # automatically when generation finishes instead of waiting for Play.
+        if self.clip_output:
+            self.pending_output_path = generated_path
+            if self.session_state:
+                self.session_state.set_last_output(generated_path)
+                self.session_state.has_pending_output = True
+            self._handle_play_request()
             return
 
         if self.play_gate:

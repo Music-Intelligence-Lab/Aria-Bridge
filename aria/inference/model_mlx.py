@@ -304,25 +304,25 @@ def apply_rotary_emb_mlx(
     x: mx.array,
     offset: int = 0,
 ) -> mx.array:
-    # Original x shape: (b_sz, s_len, n_head, d_head)
-    original_shape = x.shape
-    b_sz, s_len, n_head, d_head = original_shape
-
-    # Transpose to (b_sz, n_head, s_len, d_head)
-    x_permuted = x.transpose(0, 2, 1, 3)
-    # Reshape for mx.fast.rope: (b_sz * n_head, s_len, d_head)
-    x_reshaped = x_permuted.reshape(-1, s_len, d_head)
-
-    rotated_x_reshaped = mx.fast.rope(
-        x_reshaped,
-        dims=d_head,
-        traditional=False,
-        base=500000,
-        scale=1.0,
-        offset=offset,
+    # x shape: (b_sz, s_len, n_head, d_head).
+    #
+    # NOTE: mx.fast.rope returns layout-dependent results — for a *contiguous*
+    # length-1 sequence with a non-zero offset (exactly what the single-token
+    # decode / KV-cache path produces) it computes the wrong rotation, which made
+    # cached decoding diverge from the (correct) prefill path and produce
+    # degenerate output. We compute RoPE manually here (half-split convention,
+    # base 500000 — matches the torch reference and aria/model.py), so it is
+    # correct regardless of input memory layout.
+    b_sz, s_len, n_head, d_head = x.shape
+    half = d_head // 2
+    o = int(offset)
+    pos = mx.arange(o, o + s_len).astype(x.dtype)
+    inv_freq = 1.0 / (
+        500000.0 ** ((2.0 * mx.arange(0, half).astype(x.dtype)) / d_head)
     )
-
-    rotated_x_permuted = rotated_x_reshaped.reshape(b_sz, n_head, s_len, d_head)
-    rotated_x = rotated_x_permuted.transpose(0, 2, 1, 3)
-
-    return rotated_x
+    freqs = mx.outer(pos, inv_freq)              # (s_len, half)
+    cos = mx.cos(freqs)[None, :, None, :]        # (1, s_len, 1, half)
+    sin = mx.sin(freqs)[None, :, None, :]
+    x1 = x[..., :half]
+    x2 = x[..., half:]
+    return mx.concatenate([x1 * cos - x2 * sin, x2 * cos + x1 * sin], axis=-1)

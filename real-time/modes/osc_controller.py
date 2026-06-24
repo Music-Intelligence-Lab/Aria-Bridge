@@ -62,6 +62,12 @@ class OscController:
             "slot": None,
         }
         self._debug_enabled = False
+        # Record-toggle debounce: M4L can emit a burst of alternating values
+        # (e.g. 0,1,0) on one click; settle on the last value after a quiet window.
+        self._record_debounce_s = 0.15
+        self._record_timer_lock = threading.Lock()
+        self._record_timer: Optional[threading.Timer] = None
+        self._record_target: Optional[int] = None
 
     def start(self):
         try:
@@ -206,6 +212,10 @@ class OscController:
 
     def stop(self):
         self.stop_event.set()
+        with self._record_timer_lock:
+            if self._record_timer is not None:
+                self._record_timer.cancel()
+                self._record_timer = None
         if self.server:
             try:
                 self.server.server_close()
@@ -309,23 +319,31 @@ class OscController:
             self.send_log("Invalid /aria/record payload (ignored)")
             return
 
-        snap = self.session_state.get_snapshot()
-        last_level = snap.get("last_record_level")
-        if last_level == flag:
+        # Debounce: a single M4L click can emit a burst of alternating values
+        # (0,1,0). Remember the latest and act once the burst settles, so we don't
+        # whipsaw start/stop. The settled level is reconciled against the real
+        # recording state inside the session (record_start/stop are idempotent there).
+        with self._record_timer_lock:
+            self._record_target = flag
+            if self._record_timer is not None:
+                self._record_timer.cancel()
+            self._record_timer = threading.Timer(self._record_debounce_s, self._commit_record)
+            self._record_timer.daemon = True
+            self._record_timer.start()
+
+    def _commit_record(self):
+        with self._record_timer_lock:
+            level = self._record_target
+            self._record_timer = None
+        if level is None:
+            return
+
+        last_level = self.session_state.get_snapshot().get("last_record_level")
+        if last_level == level:
             self.send_log("Record level unchanged (ignored)")
             return
-        is_recording = snap.get("is_recording")
-        if flag == 1 and is_recording:
-            self.send_log("Already recording; record=1 ignored")
-            logger.info("[OSC] record=1 ignored (already recording)")
-            return
-        if flag == 0 and not is_recording:
-            self.send_log("Not recording; record=0 ignored")
-            logger.info("[OSC] record=0 ignored (not recording)")
-            self.session_state.set_record_level(flag)
-            return
-        self.session_state.set_record_level(flag)
-        if flag == 1:
+        self.session_state.set_record_level(level)
+        if level == 1:
             logger.info("[OSC] record=1 -> START")
             self.command_queue.put(("record_start", None))
             self.send_log("Record start requested (OSC)")
