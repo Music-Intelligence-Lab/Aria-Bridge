@@ -705,7 +705,12 @@ def main():
             if osc:
                 osc.cancel_playback_cb = session.playback_cancel_event.set
                 osc.generation_cancel_cb = session.generation_cancel_event.set
-                osc.set_clip_cb = session.set_clip_output
+                # If clip/loop was enabled on the CLI, the CLI is authoritative: don't wire
+                # the M4L /aria/clip toggle, so a default-off toggle (e.g. blasted by the
+                # sync button as /aria/clip 0) can't silently disable clip output. When clip
+                # is NOT set on the CLI, the M4L toggle drives it live.
+                if not (args.clip or args.loop):
+                    osc.set_clip_cb = session.set_clip_output
                 osc.set_loop_cb = session.set_loop_mode
                 osc.set_track_cb = session.set_clip_track
                 osc.set_slot_cb = session.set_clip_slot
