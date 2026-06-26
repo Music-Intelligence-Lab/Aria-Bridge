@@ -583,12 +583,39 @@ class ManualModeSession:
         self.clip_fire = bool(on)
         self._log_ui(f"Fire-on-write {'ON' if self.clip_fire else 'OFF'}")
 
+    def _fire_scheduler(self, osc, tempo, fire_q, stop_evt):
+        """Fire queued clips one after another: fire a clip, wait its musical length
+        (beats / tempo), then fire the next. Avoids cutting off the clip already playing
+        on the track. With Live Global Quant = 1 Bar the launches land on the grid.
+        Runs until the sentinel (None) or stop_evt.
+        """
+        import queue as _q
+        while not stop_evt.is_set():
+            try:
+                item = fire_q.get(timeout=0.2)
+            except _q.Empty:
+                continue
+            if item is None:
+                break
+            slot, length_beats = item
+            try:
+                osc.send("/live/clip/fire", [self.clip_track, slot])
+                self._log_ui(f"Fired slot {slot}")
+            except Exception:
+                logger.exception("[loop] fire failed")
+            # Wait this clip's length before firing the next (interruptible).
+            dur = max(0.1, length_beats * 60.0 / (tempo or 120.0))
+            end = time.monotonic() + dur
+            while time.monotonic() < end and not stop_evt.is_set():
+                time.sleep(0.05)
+
     def _run_clip_loop(self, first_output_path, temp, top_p, min_p, tokens):
         """Self-feeding clip loop: write the latest output as a clip, then generate the
         next from it (whole output as prompt), stacking down the column.
 
-        - buffer of self.loop_buffer clips ahead of the currently-playing slot,
-        - no fire (the user launches clips in Ableton),
+        - free-run (generate continuously down to the bottom slot),
+        - fire-on-write plays clips SEQUENTIALLY (each after the previous ends) via
+          _fire_scheduler; otherwise no fire (you launch clips in Ableton),
         - same sampling params for every generation,
         - stops on Cancel (generation_cancel_event / cancel_event) or at the bottom slot.
         """
@@ -615,6 +642,17 @@ class ManualModeSession:
         self._log_ui(f"Loop started -> slots {start_slot}..{max_slot} (free-run)")
         if self.session_state:
             self.session_state.set_status("GENERATING")
+
+        # Fire-on-write: play clips sequentially (each after the previous ends) instead of
+        # firing immediately (which would cut off the clip already playing on the track).
+        fire_q = None
+        fire_stop = threading.Event()
+        if self.clip_fire:
+            tempo = osc.get_tempo() or 120.0
+            fire_q = queue.Queue()
+            threading.Thread(target=self._fire_scheduler, args=(osc, tempo, fire_q, fire_stop),
+                             daemon=True).start()
+            self._log_ui(f"Fire = sequential (tempo {tempo:g}); set Live Global Quant to 1 Bar")
         try:
             while not cancelled():
                 if slot > max_slot:
@@ -626,14 +664,16 @@ class ManualModeSession:
                 idx += 1
                 name = f"Output {idx}"
                 try:
-                    n = osc.write_clip(
+                    n, length_beats = osc.write_clip(
                         prompt_path, self.clip_track, slot, name=name,
                         beats_per_bar=self.beats_per_bar, set_tempo=self.clip_set_tempo,
-                        replace=self.clip_replace, fire=self.clip_fire,
+                        replace=self.clip_replace, fire=False,
                     )
                     self._log_ui(f"Loop wrote '{name}' ({n} notes) -> slot {slot}")
                     if self.osc_log_cb:
                         self.osc_log_cb(f"Loop '{name}' -> slot {slot}")
+                    if fire_q is not None:  # sequential fire: queue it to play after the prev clip
+                        fire_q.put((slot, length_beats))
                 except Exception as e:
                     logger.exception(f"[loop] clip write failed: {e}")
                     self._log_ui("Loop clip write failed (is AbletonOSC running?)")
@@ -660,6 +700,9 @@ class ManualModeSession:
                 prompt_path = nxt
         finally:
             self.loop_running = False
+            fire_stop.set()
+            if fire_q is not None:
+                fire_q.put(None)
             try:
                 os.unlink(prompt_path)
             except Exception:

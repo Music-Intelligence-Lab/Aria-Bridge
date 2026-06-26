@@ -181,12 +181,22 @@ class AbletonOSCClient:
                 return None
         return None
 
+    def get_tempo(self):
+        r = self.query("/live/song/get/tempo", [])
+        if r:
+            try:
+                return float(r[-1])
+            except (ValueError, TypeError):
+                return None
+        return None
+
     def write_clip(self, midi_path, track, slot, name=None, beats_per_bar=4,
                    set_tempo=False, replace=True, fire=False):
         """Write a .mid into (track, slot). Send-only (uses this client's socket)."""
         notes, end_beat, bpm = extract_notes(midi_path)
+        # End on the next downbeat (bar boundary) at/after the last note.
         bpb = beats_per_bar if beats_per_bar and beats_per_bar > 0 else 4
-        length_beats = max(bpb, math.ceil(end_beat / bpb) * bpb)
+        length_beats = max(bpb, math.ceil(round(end_beat, 4) / bpb) * bpb)
         if set_tempo:
             self.client.send_message("/live/song/set/tempo", [float(bpm)])
         if replace:
@@ -202,7 +212,7 @@ class AbletonOSCClient:
             self.client.send_message("/live/clip/add/notes", flat)
         if fire:
             self.client.send_message("/live/clip/fire", [track, slot])
-        return len(notes)
+        return len(notes), length_beats
 
     def close(self):
         if self.server:
@@ -238,8 +248,9 @@ def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAUL
         logger.exception(f"clip_output: failed to parse {midi_path}: {e}")
         return -1, slot
 
+    # End on the next downbeat (bar boundary) at/after the last note.
     bpb = beats_per_bar if beats_per_bar and beats_per_bar > 0 else 4
-    length_beats = max(bpb, math.ceil(end_beat / bpb) * bpb)
+    length_beats = max(bpb, math.ceil(round(end_beat, 4) / bpb) * bpb)
 
     # If asked, drop into the slot under an existing clip instead of overwriting.
     used_slot = slot
