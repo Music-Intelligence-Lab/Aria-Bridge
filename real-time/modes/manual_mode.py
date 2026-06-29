@@ -161,6 +161,7 @@ class ManualModeSession:
         osc_params_cb=None,
         osc_generation_start_cb=None,
         osc_generation_done_cb=None,
+        osc_generation_progress_cb=None,
         osc_playback_progress_cb=None,
         osc_playback_stopped_cb=None,
         osc_playback_duration_cb=None,
@@ -201,6 +202,7 @@ class ManualModeSession:
         self.osc_params_cb = osc_params_cb
         self.osc_generation_start_cb = osc_generation_start_cb
         self.osc_generation_done_cb = osc_generation_done_cb
+        self.osc_generation_progress_cb = osc_generation_progress_cb
         self.osc_playback_progress_cb = osc_playback_progress_cb
         self.osc_playback_stopped_cb = osc_playback_stopped_cb
         self.osc_playback_duration_cb = osc_playback_duration_cb
@@ -688,6 +690,7 @@ class ManualModeSession:
                     horizon_s=self.gen_seconds,
                     temperature=temp, top_p=top_p, min_p=min_p,
                     max_new_tokens=tokens,
+                    progress_cb=self.osc_generation_progress_cb,
                 )
                 # The prompt's notes are now in Ableton; drop the temp file.
                 try:
@@ -799,6 +802,7 @@ class ManualModeSession:
                     top_p=top_p,
                     min_p=min_p,
                     max_new_tokens=tokens,
+                    progress_cb=self.osc_generation_progress_cb,
                 )
             except _GenerationCanceled:
                 logger.info("[manual] Generation interrupted mid-token")

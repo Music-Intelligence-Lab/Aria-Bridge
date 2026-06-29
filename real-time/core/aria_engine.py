@@ -11,6 +11,35 @@ import torch
 logger = logging.getLogger(__name__)
 
 
+def _progress_tqdm(orig_tqdm, progress_cb):
+    """Return a tqdm-compatible factory that also reports progress (0..1) to
+    ``progress_cb`` on each step. Taps the sampler's existing terminal bar (the
+    same one shown in the console) without modifying the vendored sampler.
+    """
+    class _Bar:
+        def __init__(self, *args, **kwargs):
+            self._bar = orig_tqdm(*args, **kwargs)
+
+        def __iter__(self):
+            total = getattr(self._bar, "total", None)
+            for i, item in enumerate(self._bar):
+                if total:
+                    try:
+                        progress_cb((i + 1) / total)
+                    except Exception:
+                        pass
+                yield item
+            try:
+                progress_cb(1.0)
+            except Exception:
+                pass
+
+        def __getattr__(self, name):
+            return getattr(self._bar, name)
+
+    return _Bar
+
+
 def _strip_leading_notes(midi_obj, n_skip):
     """Return a copy of ``midi_obj`` with the first ``n_skip`` sounded notes removed
     and timing rebased so the next note starts at t=0.
@@ -145,7 +174,7 @@ class AriaEngine:
             logger.error(f"Failed to load model: {e}")
             raise
 
-    def _sample_batch_mlx(self, prompt, max_new_tokens, temp, top_p, min_p):
+    def _sample_batch_mlx(self, prompt, max_new_tokens, temp, top_p, min_p, progress_cb=None):
         """MLX sampling driven from the bridge (O(n) KV-cache decode).
 
         Mirrors aria's ``sample_batch`` but calls the model directly so we can pass
@@ -221,8 +250,23 @@ class AriaEngine:
                 force_end=False,
                 tokenizer=tok,
             )
+            # Emit generation progress (0..1) every few tokens for a M4L slider.
+            if progress_cb is not None:
+                done = idx - prompt_len + 1
+                if done % 8 == 0 or done == max_new_tokens:
+                    try:
+                        progress_cb(done / max_new_tokens)
+                    except Exception:
+                        pass
+
             if all(eos_tok_seen):
                 break
+
+        if progress_cb is not None:
+            try:
+                progress_cb(1.0)
+            except Exception:
+                pass
 
         decoded = tok.decode(seq[0].tolist())
         if tok.eos_tok in decoded:
@@ -238,6 +282,7 @@ class AriaEngine:
         top_p: Optional[float] = 0.9,
         min_p: Optional[float] = None,
         max_new_tokens: Optional[int] = None,
+        progress_cb=None,
     ) -> str:
         """
         Generate continuation from a prompt MIDI file.
@@ -293,22 +338,31 @@ class AriaEngine:
                     temp=temperature,
                     top_p=top_p,
                     min_p=min_p,
+                    progress_cb=progress_cb,
                 )
             else:
-                from aria.inference.sample_cuda import sample_batch
-                with torch.inference_mode():
-                    results = sample_batch(
-                        model=self.model,
-                        tokenizer=self.tokenizer,
-                        prompt=prompt,
-                        num_variations=1,
-                        max_new_tokens=max_new_tokens,
-                        temp=temperature,
-                        force_end=False,
-                        top_p=top_p,
-                        min_p=min_p,
-                        compile=False,
-                    )
+                import aria.inference.sample_cuda as _sc
+                # Tap the sampler's tqdm bar to emit progress to the M4L slider —
+                # without modifying the vendored sampler (restored in finally).
+                _orig_tqdm = _sc.tqdm
+                if progress_cb is not None:
+                    _sc.tqdm = _progress_tqdm(_orig_tqdm, progress_cb)
+                try:
+                    with torch.inference_mode():
+                        results = _sc.sample_batch(
+                            model=self.model,
+                            tokenizer=self.tokenizer,
+                            prompt=prompt,
+                            num_variations=1,
+                            max_new_tokens=max_new_tokens,
+                            temp=temperature,
+                            force_end=False,
+                            top_p=top_p,
+                            min_p=min_p,
+                            compile=False,
+                        )
+                finally:
+                    _sc.tqdm = _orig_tqdm
 
             gen_time = time.time() - start_time
             logger.debug(f"Generation took {gen_time:.2f}s, produced {len(results[0])} tokens")

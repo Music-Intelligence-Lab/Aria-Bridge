@@ -274,6 +274,15 @@ class OscController:
         except Exception:
             logger.debug("Failed to send /generation_done")
 
+    def send_generation_progress(self, value: float):
+        if not self.client:
+            return
+        try:
+            # Send 0..100 so a slider can be fed directly (no scaling in Max).
+            self.client.send_message("/generation_progress", round(float(value) * 100.0))
+        except Exception:
+            logger.debug("Failed to send /generation_progress")
+
     def send_playback_progress(self, value: float):
         if not self.client:
             return

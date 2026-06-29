@@ -683,6 +683,7 @@ def main():
                 osc_params_cb=osc.send_params if osc else None,
                 osc_generation_start_cb=osc.send_generation_start if osc else None,
                 osc_generation_done_cb=osc.send_generation_done if osc else None,
+                osc_generation_progress_cb=osc.send_generation_progress if osc else None,
                 osc_playback_progress_cb=osc.send_playback_progress if osc else None,
                 osc_playback_stopped_cb=osc.send_playback_stopped if osc else None,
                 osc_playback_duration_cb=osc.send_playback_duration if osc else None,
