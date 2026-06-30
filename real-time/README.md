@@ -171,6 +171,36 @@ Keyboard-driven, no OSC. Press `r` to toggle recording, `p` to trigger playback.
 
 ---
 
+## Ableton clip output & infinite loop (AbletonOSC)
+
+Instead of streaming generated notes out `ARIA_OUT`, the bridge can write them **directly into an Ableton
+clip** via [AbletonOSC](https://github.com/ideoforms/AbletonOSC) — so Ableton's own engine plays them
+(sample-accurate, downbeat-locked, re-triggerable).
+
+**Setup:** install AbletonOSC and add it as a Control Surface (Preferences → MIDI), with **Input = None,
+Output = None** (it speaks OSC on UDP 11000/11001, not MIDI).
+
+**Clip output** — write each generation into a clip on PLAY:
+
+```bash
+python ableton_bridge.py m4l --checkpoint <path> --clip --track 0 --slot 0
+```
+
+Clips are named `Output 1`, `Output 2`, … and end on a downbeat. Add `--clip-advance` to stack into the
+next empty slot, `--clip-tempo` to set Live's tempo to the generated tempo.
+
+**Infinite loop** — seed once, then feed each output back as the next prompt, stacking clips down the
+column (you launch them in Ableton; Cancel stops):
+
+```bash
+python ableton_bridge.py m4l --checkpoint <path> --loop --track 0 --slot 0
+```
+
+With **fire-on-write** on (`/aria/fire 1`), clips play sequentially — each fires after the previous ends
+(set Live's Global Launch Quantization to **1 Bar**).
+
+---
+
 ## CLI Reference
 
 <details>
@@ -226,6 +256,23 @@ python ableton_bridge.py [PRESET] [OPTIONS]
 | `--osc-in-port` | `9000` | Incoming OSC port |
 | `--osc-out-port` | `9001` | Outgoing OSC port |
 
+**Clip output & infinite loop (AbletonOSC)** — requires [AbletonOSC](https://github.com/ideoforms/AbletonOSC) running as a Control Surface (Input/Output = None)
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--clip` | off | On PLAY, write the generated MIDI into an Ableton clip instead of streaming to `ARIA_OUT` |
+| `--track` | `0` | Target track index (0-based) |
+| `--slot` | `0` | Target clip slot index (0-based) |
+| `--clip-host` | `127.0.0.1` | AbletonOSC host |
+| `--clip-port` | `11000` | AbletonOSC receive port |
+| `--clip-tempo` | off | Set Live's tempo to the generated tempo (plays exactly as generated; changes the global tempo) |
+| `--clip-advance` | off | If the target slot is occupied, write into the next empty slot below instead of overwriting |
+| `--no-clip-fire` | — | Don't auto-fire the clip after writing |
+| `--no-clip-replace` | — | Don't delete an existing clip in the slot first |
+| `--loop` | off | Infinite loop: feed each output back as the next prompt, stacking clips down the column (implies `--clip`). Record once to seed; Cancel stops |
+| `--loop-buffer` | `4` | Clips to keep ahead of the playing slot (currently free-run) |
+| `--loop-max-slot` | `7` | Bottom slot to stop at if Live's scene count is unavailable |
+
 **Feedback**
 
 | Flag | Default | Description |
@@ -238,7 +285,7 @@ python ableton_bridge.py [PRESET] [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--checkpoint <path>` | Aria model checkpoint (required) |
-| `--device {cuda,cpu}` | Inference device (default: cuda) |
+| `--device {cuda,mlx,cpu}` | Inference device — auto-detected if omitted (mlx on Apple Silicon, else cuda, else cpu) |
 | `--list-ports` | List MIDI ports and exit |
 
 Any explicit flag overrides the preset default.
@@ -269,9 +316,14 @@ Any explicit flag overrides the preset default.
 | `/aria/min_p` | float 0.0–0.2 | Set min-p |
 | `/aria/tokens` | int 0–2048 | Set max generation tokens |
 | `/aria/play` | — | Trigger playback of pending output |
-| `/aria/cancel` | — | Cancel recording, interrupt generation, discard pending output |
+| `/aria/cancel` | — | Cancel recording, interrupt generation, discard pending output (stops the loop) |
 | `/cancel_playback` | — | Stop active MIDI playback immediately |
 | `/aria/ping` | — | Request status snapshot |
+| `/aria/clip` | `1` or `0` | Route output to an Ableton clip (on) vs `ARIA_OUT` (off) |
+| `/aria/loop` | `1` or `0` | Arm the infinite loop (needs clip on); Record starts it, off stops it |
+| `/aria/track` | int | Target clip track (0-based) |
+| `/aria/slot` | int | Target clip slot (0-based) |
+| `/aria/fire` | `1` or `0` | Fire-on-write — auto-launch each clip as it's written |
 
 **Outgoing (bridge → client)**
 
@@ -281,6 +333,7 @@ Any explicit flag overrides the preset default.
 | `/aria/params` | `[temp, top_p, min_p]` | Current sampling parameters |
 | `/aria/log` | string | Event log message |
 | `/generation_start` | — | Model has started generating |
+| `/generation_progress` | int 0–100 | Generation progress (drive a M4L slider, range 0–100) |
 | `/generation_done` | — | Generation finished or was canceled |
 | `/playback_duration` | float (seconds) | Total duration of the MIDI about to play |
 | `/playback_progress` | float 0.0–1.0 | Playback position |

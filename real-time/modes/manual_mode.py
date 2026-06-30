@@ -585,6 +585,34 @@ class ManualModeSession:
         self.clip_fire = bool(on)
         self._log_ui(f"Fire-on-write {'ON' if self.clip_fire else 'OFF'}")
 
+    def _generate_cancellable(self, **gen_kwargs):
+        """Run aria_engine.generate in a thread so /aria/cancel interrupts it
+        mid-generation (same mechanism as the normal record->generate path).
+        Returns the generated path, or None if canceled/failed."""
+        result = [None]
+        tid = [None]
+
+        def _run():
+            tid[0] = threading.current_thread().ident
+            try:
+                result[0] = self.aria_engine.generate(**gen_kwargs)
+            except _GenerationCanceled:
+                logger.info("[loop] generation interrupted mid-token")
+            except Exception as e:
+                logger.exception(f"[loop] generation error: {e}")
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        while t.is_alive():
+            if (self.generation_cancel_event.is_set() or self.cancel_event.is_set()
+                    or self.skip_pending_event.is_set()) and tid[0] is not None:
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                    ctypes.c_ulong(tid[0]), ctypes.py_object(_GenerationCanceled))
+                tid[0] = None
+            time.sleep(0.03)
+        t.join(timeout=2.0)
+        return result[0]
+
     def _fire_scheduler(self, osc, tempo, fire_q, stop_evt):
         """Fire queued clips one after another: fire a clip, wait its musical length
         (beats / tempo), then fire the next. Avoids cutting off the clip already playing
@@ -682,9 +710,10 @@ class ManualModeSession:
                     break
                 slot += 1
 
-                # Generate the next output from the whole previous output.
+                # Generate the next output from the whole previous output —
+                # cancellable mid-token so /aria/cancel stops the loop immediately.
                 out_seconds = self._midi_stats(prompt_path)[1]
-                nxt = self.aria_engine.generate(
+                nxt = self._generate_cancellable(
                     prompt_midi_path=prompt_path,
                     prompt_duration_s=max(1, int(out_seconds) + 1),
                     horizon_s=self.gen_seconds,
@@ -692,6 +721,8 @@ class ManualModeSession:
                     max_new_tokens=tokens,
                     progress_cb=self.osc_generation_progress_cb,
                 )
+                if cancelled():
+                    break
                 # The prompt's notes are now in Ableton; drop the temp file.
                 try:
                     os.unlink(prompt_path)

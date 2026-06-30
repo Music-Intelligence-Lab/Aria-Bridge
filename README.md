@@ -126,12 +126,16 @@ Double-click **Aria Bridge.app**. The app opens and the backend starts automatic
 |---|---|
 | `record` | Start / stop recording your MIDI input |
 | `play` | Play back the generated output |
-| `cancel` | Stop whatever is happening — cancels recording, interrupts generation, stops playback, or discards a pending output and returns to record |
+| `cancel` | Stop whatever is happening — cancels recording, interrupts generation, stops playback, or discards a pending output and returns to record (also stops the loop) |
 | `commit` | Save this generation with your ratings |
 | `sync` | Re-send all parameter values to the backend |
 | `temp` | Temperature — higher = more surprising, lower = more conservative |
 | `top_p` / `min_p` | Sampling filters — leave at defaults to start |
 | `tokens` | How many tokens to generate — more = longer output |
+| `clip` | Send the generation into an Ableton **clip** (via AbletonOSC) instead of out `ARIA_OUT` |
+| `loop` | **Infinite loop** — feed each output back as the next prompt, clip after clip (needs `clip` on) |
+| `track` / `slot` | Which Ableton track / clip slot to write into |
+| `fire` | Auto-launch each clip as it's written (off = you launch them) |
 | `coherence` / `taste` / `repetition` / `continuity` / `grade` | Rate the generation 1–5 before committing |
 
 **Basic workflow:**
@@ -140,6 +144,35 @@ Double-click **Aria Bridge.app**. The app opens and the backend starts automatic
 3. A timer shows while the model is running
 4. When ready, hit `play` to hear the result
 5. If you like it, rate it and hit `commit`
+
+---
+
+## Ableton clip output & infinite loop (advanced)
+
+Instead of playing the generation out a MIDI port, Aria can drop it **straight into an Ableton clip** so
+Live's own engine plays it — perfectly in time and re-triggerable. This needs **AbletonOSC**, a free
+control surface for Ableton.
+
+### Install AbletonOSC (one time)
+
+1. Download it from GitHub: **[github.com/ideoforms/AbletonOSC](https://github.com/ideoforms/AbletonOSC)** → green **Code** button → **Download ZIP**, then unzip. (You want the inner `AbletonOSC` folder.)
+2. Move the `AbletonOSC` folder into Ableton's **Remote Scripts** folder (create the folder if it doesn't exist):
+   - **Windows:** `\Users\<you>\Documents\Ableton\User Library\Remote Scripts\`
+   - **macOS:** `~/Music/Ableton/User Library/Remote Scripts/`
+3. Restart Ableton Live.
+4. **Preferences → Link/Tempo/MIDI**, under **Control Surface** pick **AbletonOSC**, and set **Input = None** and **Output = None** (it uses OSC over the network, not MIDI).
+
+That's it — Live's log will show `AbletonOSC: Listening for OSC on port 11000` when it loads.
+
+### Use it
+
+- **`clip`** on → each generation is written into the track/slot set by `track` / `slot`.
+- **`loop`** on (needs `clip`) → **infinite mode**: record one idea to seed it, then Aria keeps feeding
+  its own output back in and writing clip after clip down the column. You launch the clips in Ableton;
+  `cancel` stops the loop.
+- **`fire`** on → clips auto-launch as they're written (off by default in loop, so you trigger them).
+
+> Tip: set Ableton's **Global Launch Quantization to 1 Bar** so clips start and chain on the downbeat.
 
 ---
 
