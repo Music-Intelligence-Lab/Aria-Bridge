@@ -81,6 +81,26 @@ def find_first_empty_slot(host, port, track, start_slot, recv_port=RECV_PORT,
     return found
 
 
+def _clip_lengths(end_beat, bpb, measures_out):
+    """Return (clip_len, loop_len, play_len) in beats.
+
+    - clip_len: full clip — holds ALL notes, ending on the downbeat after the last note.
+    - loop_len: truncated loop length (``measures_out`` bars), or None if not truncating.
+    - play_len: what plays each pass (loop_len when truncating, else clip_len).
+
+    Truncation only kicks in when ``measures_out`` is SHORTER than the generated content —
+    it just shortens the loop region, keeping every note. If the knob is >= the generated
+    length (or 0), it's ignored and the clip is the full length rounded up to the last
+    note's bar (never padded with silence).
+    """
+    full_len = max(bpb, math.ceil(round(end_beat, 4) / bpb) * bpb)
+    if measures_out and measures_out > 0:
+        loop_len = measures_out * bpb
+        if loop_len < full_len:
+            return full_len, loop_len, loop_len
+    return full_len, None, full_len
+
+
 def extract_notes(midi_path):
     """Parse a .mid into (notes, end_beat, bpm).
 
@@ -191,17 +211,21 @@ class AbletonOSCClient:
         return None
 
     def write_clip(self, midi_path, track, slot, name=None, beats_per_bar=4,
-                   set_tempo=False, replace=True, fire=False):
-        """Write a .mid into (track, slot). Send-only (uses this client's socket)."""
+                   set_tempo=False, replace=True, fire=False, measures_out=0):
+        """Write a .mid into (track, slot). Send-only (uses this client's socket).
+
+        If ``measures_out`` > 0, the loop is truncated to that many bars via loop_end
+        — all notes are kept, only the loop region is shortened. Returns
+        (n_notes, play_len_beats).
+        """
         notes, end_beat, bpm = extract_notes(midi_path)
-        # End on the next downbeat (bar boundary) at/after the last note.
         bpb = beats_per_bar if beats_per_bar and beats_per_bar > 0 else 4
-        length_beats = max(bpb, math.ceil(round(end_beat, 4) / bpb) * bpb)
+        clip_len, loop_len, play_len = _clip_lengths(end_beat, bpb, measures_out)
         if set_tempo:
             self.client.send_message("/live/song/set/tempo", [float(bpm)])
         if replace:
             self.client.send_message("/live/clip_slot/delete_clip", [track, slot])
-        self.client.send_message("/live/clip_slot/create_clip", [track, slot, float(length_beats)])
+        self.client.send_message("/live/clip_slot/create_clip", [track, slot, float(clip_len)])
         if name:
             self.client.send_message("/live/clip/set/name", [track, slot, str(name)])
         for i in range(0, len(notes), NOTES_PER_MSG):
@@ -210,9 +234,12 @@ class AbletonOSCClient:
             for (pitch, start, dur, vel, mute) in chunk:
                 flat += [int(pitch), float(start), float(dur), int(vel), int(mute)]
             self.client.send_message("/live/clip/add/notes", flat)
+        if loop_len:
+            self.client.send_message("/live/clip/set/loop_start", [track, slot, 0.0])
+            self.client.send_message("/live/clip/set/loop_end", [track, slot, float(loop_len)])
         if fire:
             self.client.send_message("/live/clip/fire", [track, slot])
-        return len(notes), length_beats
+        return len(notes), play_len
 
     def close(self):
         if self.server:
@@ -224,7 +251,7 @@ class AbletonOSCClient:
 
 def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAULT_PORT,
                       replace=True, fire=True, beats_per_bar=4, set_tempo=False, name=None,
-                      auto_advance=False):
+                      auto_advance=False, measures_out=0):
     """Write the notes of ``midi_path`` into Ableton clip (track, slot) via AbletonOSC.
 
     If ``auto_advance`` is True, an occupied target slot is skipped — the clip is
@@ -248,9 +275,8 @@ def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAUL
         logger.exception(f"clip_output: failed to parse {midi_path}: {e}")
         return -1, slot
 
-    # End on the next downbeat (bar boundary) at/after the last note.
     bpb = beats_per_bar if beats_per_bar and beats_per_bar > 0 else 4
-    length_beats = max(bpb, math.ceil(round(end_beat, 4) / bpb) * bpb)
+    clip_len, loop_len, length_beats = _clip_lengths(end_beat, bpb, measures_out)
 
     # If asked, drop into the slot under an existing clip instead of overwriting.
     used_slot = slot
@@ -262,7 +288,7 @@ def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAUL
         client.send_message("/live/song/set/tempo", [float(bpm)])
     if replace and not auto_advance:
         client.send_message("/live/clip_slot/delete_clip", [track, used_slot])
-    client.send_message("/live/clip_slot/create_clip", [track, used_slot, float(length_beats)])
+    client.send_message("/live/clip_slot/create_clip", [track, used_slot, float(clip_len)])
     if name:
         client.send_message("/live/clip/set/name", [track, used_slot, str(name)])
     for i in range(0, len(notes), NOTES_PER_MSG):
@@ -271,6 +297,10 @@ def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAUL
         for (pitch, start, dur, vel, mute) in chunk:
             flat += [int(pitch), float(start), float(dur), int(vel), int(mute)]
         client.send_message("/live/clip/add/notes", flat)
+    if loop_len:
+        # Truncate the loop to N bars (keeps all notes; shortens the loop region).
+        client.send_message("/live/clip/set/loop_start", [track, used_slot, 0.0])
+        client.send_message("/live/clip/set/loop_end", [track, used_slot, float(loop_len)])
     if fire:
         client.send_message("/live/clip/fire", [track, used_slot])
 

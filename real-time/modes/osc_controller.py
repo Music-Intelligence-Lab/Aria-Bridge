@@ -38,6 +38,7 @@ class OscController:
         self.set_track_cb = None
         self.set_slot_cb = None
         self.set_fire_cb = None
+        self.set_measures_cb = None
         self.server = None
         self.client = None
         self.stop_event = threading.Event()
@@ -88,6 +89,7 @@ class OscController:
         disp.map("/aria/track", self._handle_track)
         disp.map("/aria/slot", self._handle_slot)
         disp.map("/aria/fire", self._handle_fire)
+        disp.map("/aria/measures", self._handle_measures)
         disp.map("/cancel_playback", self._handle_cancel_playback)
         disp.map("/aria/ping", self._handle_ping)
         disp.map("/aria/play", self._handle_play)
@@ -421,6 +423,18 @@ class OscController:
         print(f"STATUS:param:fire:{flag}", flush=True)
         if self.set_fire_cb:
             self.set_fire_cb(flag)
+
+    def _handle_measures(self, addr, *args):
+        if not args:
+            return
+        try:
+            val = int(round(float(args[0])))
+        except (TypeError, ValueError):
+            return
+        logger.info(f"[OSC] measures -> {val}")
+        print(f"STATUS:param:measures:{val}", flush=True)
+        if self.set_measures_cb:
+            self.set_measures_cb(val)
 
     def _handle_cancel_playback(self, addr, *args):
         logger.info("[OSC] /cancel_playback received — stopping MIDI feed")

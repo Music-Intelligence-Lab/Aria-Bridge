@@ -176,6 +176,7 @@ class ManualModeSession:
         clip_fire: bool = True,
         clip_set_tempo: bool = False,
         clip_auto_advance: bool = False,
+        clip_measures: int = 0,
         loop_mode: bool = False,
         loop_buffer: int = 4,
         loop_max_slot: int = 7,
@@ -220,11 +221,13 @@ class ManualModeSession:
         self.clip_fire = clip_fire
         self.clip_set_tempo = clip_set_tempo
         self.clip_auto_advance = clip_auto_advance
+        self.clip_measures = clip_measures   # 0 = full clip; N = truncate loop to N bars
         self.loop_mode = loop_mode
         self.loop_buffer = loop_buffer
         self.loop_max_slot = loop_max_slot
         self.loop_running = False
         self.clip_index = 0  # increments per written clip -> "Output 1", "Output 2", ...
+        self.pending_prompt_path = None  # recorded prompt kept to write as an input clip
         self.pending_output_path = None
         self._msg_count = 0
         self._note_on_count = 0
@@ -441,6 +444,7 @@ class ManualModeSession:
                 replace=self.clip_replace, fire=self.clip_fire,
                 beats_per_bar=self.beats_per_bar, set_tempo=self.clip_set_tempo,
                 name=clip_name, auto_advance=self.clip_auto_advance,
+                measures_out=self.clip_measures,
             )
             msg = (f"Wrote clip '{clip_name}' ({n} notes) -> track {self.clip_track} slot {used_slot}"
                    if n >= 0 else "Clip write failed (is AbletonOSC running?)")
@@ -448,6 +452,26 @@ class ManualModeSession:
             self._log_ui(msg)
             if self.osc_log_cb:
                 self.osc_log_cb(msg)
+            # Pair: write the recorded input to the track before, at the same slot.
+            input_track = self.clip_track - 1
+            if n >= 0 and input_track >= 0 and self.pending_prompt_path:
+                try:
+                    send_midi_to_clip(
+                        self.pending_prompt_path, track=input_track, slot=used_slot,
+                        host=self.clip_host, port=self.clip_port,
+                        replace=self.clip_replace, fire=False,
+                        beats_per_bar=self.beats_per_bar, set_tempo=False,
+                        name=f"Input {self.clip_index}", auto_advance=False,
+                        measures_out=self.clip_measures,
+                    )
+                except Exception:
+                    logger.exception("[clip] input clip write failed")
+            if self.pending_prompt_path:
+                try:
+                    os.unlink(self.pending_prompt_path)
+                except Exception:
+                    pass
+                self.pending_prompt_path = None
             if self.osc_playback_stopped_cb:
                 self.osc_playback_stopped_cb()
             try:
@@ -585,6 +609,13 @@ class ManualModeSession:
         self.clip_fire = bool(on)
         self._log_ui(f"Fire-on-write {'ON' if self.clip_fire else 'OFF'}")
 
+    def set_clip_measures(self, n):
+        try:
+            self.clip_measures = max(0, int(round(float(n))))
+        except (TypeError, ValueError):
+            return
+        self._log_ui(f"Measures out -> {self.clip_measures if self.clip_measures else 'full'}")
+
     def _generate_cancellable(self, **gen_kwargs):
         """Run aria_engine.generate in a thread so /aria/cancel interrupts it
         mid-generation (same mechanism as the normal record->generate path).
@@ -639,11 +670,13 @@ class ManualModeSession:
             while time.monotonic() < end and not stop_evt.is_set():
                 time.sleep(0.05)
 
-    def _run_clip_loop(self, first_output_path, temp, top_p, min_p, tokens):
+    def _run_clip_loop(self, first_output_path, seed_input_path, temp, top_p, min_p, tokens):
         """Self-feeding clip loop: write the latest output as a clip, then generate the
         next from it (whole output as prompt), stacking down the column.
 
         - free-run (generate continuously down to the bottom slot),
+        - each output's PROMPT is also written to the track before it (same slot) when
+          clip output is on and that track exists (clip_track-1 >= 0),
         - fire-on-write plays clips SEQUENTIALLY (each after the previous ends) via
           _fire_scheduler; otherwise no fire (you launch clips in Ableton),
         - same sampling params for every generation,
@@ -666,7 +699,10 @@ class ManualModeSession:
                     or self.skip_pending_event.is_set())
 
         slot = start_slot
-        prompt_path = first_output_path  # Output 1 = continuation of the recorded seed
+        prompt_path = first_output_path  # the output to write this iteration (Output 1 first)
+        input_path = seed_input_path     # the prompt that produced `prompt_path`
+        input_track = self.clip_track - 1
+        write_input = input_track >= 0   # only pair if there's a track before the output track
         idx = 0
         self.loop_running = True
         self._log_ui(f"Loop started -> slots {start_slot}..{max_slot} (free-run)")
@@ -697,11 +733,22 @@ class ManualModeSession:
                     n, length_beats = osc.write_clip(
                         prompt_path, self.clip_track, slot, name=name,
                         beats_per_bar=self.beats_per_bar, set_tempo=self.clip_set_tempo,
-                        replace=self.clip_replace, fire=False,
+                        replace=self.clip_replace, fire=False, measures_out=self.clip_measures,
                     )
                     self._log_ui(f"Loop wrote '{name}' ({n} notes) -> slot {slot}")
                     if self.osc_log_cb:
                         self.osc_log_cb(f"Loop '{name}' -> slot {slot}")
+                    # Pair: write this output's prompt to the track before it, same slot.
+                    if write_input and input_path:
+                        try:
+                            osc.write_clip(
+                                input_path, input_track, slot, name=f"Input {idx}",
+                                beats_per_bar=self.beats_per_bar, set_tempo=False,
+                                replace=self.clip_replace, fire=False,
+                                measures_out=self.clip_measures,
+                            )
+                        except Exception:
+                            logger.exception("[loop] input clip write failed")
                     if fire_q is not None:  # sequential fire: queue it to play after the prev clip
                         fire_q.put((slot, length_beats))
                 except Exception as e:
@@ -723,24 +770,30 @@ class ManualModeSession:
                 )
                 if cancelled():
                     break
-                # The prompt's notes are now in Ableton; drop the temp file.
-                try:
-                    os.unlink(prompt_path)
-                except Exception:
-                    pass
+                # The old input has been written as a clip; free it. Keep the current
+                # output — it becomes the prompt (input) for the next one.
+                if input_path and input_path != prompt_path:
+                    try:
+                        os.unlink(input_path)
+                    except Exception:
+                        pass
+                    input_path = None
                 if not nxt:
                     self._log_ui("Loop generation returned nothing; stopping.")
                     break
+                input_path = prompt_path
                 prompt_path = nxt
         finally:
             self.loop_running = False
             fire_stop.set()
             if fire_q is not None:
                 fire_q.put(None)
-            try:
-                os.unlink(prompt_path)
-            except Exception:
-                pass
+            for _p in {input_path, prompt_path}:
+                if _p:
+                    try:
+                        os.unlink(_p)
+                    except Exception:
+                        pass
             osc.close()
             self.generation_cancel_event.clear()
             self.skip_pending_event.clear()
@@ -922,13 +975,16 @@ class ManualModeSession:
         # down the column (no fire — you launch them). Buffer of N ahead of the playing
         # slot; stops at Cancel or the bottom slot. Bypasses the normal play-gate.
         if self.loop_mode and self.clip_output:
-            self._run_clip_loop(generated_path, temp, top_p, min_p, tokens)
+            # Pass the recorded prompt as the seed input (loop writes it to track-1 and
+            # owns its temp file cleanup).
+            self._run_clip_loop(generated_path, prompt_midi_path, temp, top_p, min_p, tokens)
             return
 
         # Clip output (no loop): writing the clip IS the output action, so do it
         # automatically when generation finishes instead of waiting for Play.
         if self.clip_output:
             self.pending_output_path = generated_path
+            self.pending_prompt_path = prompt_midi_path  # write as the paired input clip
             if self.session_state:
                 self.session_state.set_last_output(generated_path)
                 self.session_state.has_pending_output = True

@@ -478,6 +478,7 @@ def main():
     parser.add_argument("--no-clip-replace", action="store_true", help="--clip: do not delete an existing clip in the slot first")
     parser.add_argument("--clip-tempo", action="store_true", help="--clip: set the Live Set tempo to the generated tempo (plays exactly as generated; changes global tempo)")
     parser.add_argument("--clip-advance", action="store_true", help="--clip: if the target slot is occupied, write into the first empty slot below instead of overwriting")
+    parser.add_argument("--measures-out", type=int, default=0, help="--clip: truncate the clip's loop to this many bars (0 = full clip; keeps all notes, only shortens the loop)")
     # --- Infinite clip-loop: seed once (record), then feed each output back as the next
     #     prompt, stacking clips down the column. You launch clips in Ableton; Cancel stops.
     parser.add_argument("--loop", action="store_true", help="Infinite clip loop: feed each generated output back as the next prompt, writing clips down the column (implies --clip)")
@@ -699,6 +700,7 @@ def main():
                 clip_fire=False if args.loop else (not args.no_clip_fire),
                 clip_set_tempo=args.clip_tempo,
                 clip_auto_advance=args.clip_advance,
+                clip_measures=args.measures_out,
                 loop_mode=args.loop,
                 loop_buffer=args.loop_buffer,
                 loop_max_slot=args.loop_max_slot,
@@ -716,6 +718,7 @@ def main():
                 osc.set_track_cb = session.set_clip_track
                 osc.set_slot_cb = session.set_clip_slot
                 osc.set_fire_cb = session.set_clip_fire
+                osc.set_measures_cb = session.set_clip_measures
             if args.ui:
                 run_ui = _load_run_ui()
                 session_thread = threading.Thread(target=session.run, daemon=True)

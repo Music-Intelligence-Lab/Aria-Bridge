@@ -187,7 +187,9 @@ python ableton_bridge.py m4l --checkpoint <path> --clip --track 0 --slot 0
 ```
 
 Clips are named `Output 1`, `Output 2`, … and end on a downbeat. Add `--clip-advance` to stack into the
-next empty slot, `--clip-tempo` to set Live's tempo to the generated tempo.
+next empty slot, `--clip-tempo` to set Live's tempo to the generated tempo. The **prompt/input** for each
+generation is also written to the track **directly before** the output track (`clip_track - 1`), same
+slot — so you get the input and its continuation side by side (skipped if the output is on track 0).
 
 **Infinite loop** — seed once, then feed each output back as the next prompt, stacking clips down the
 column (you launch them in Ableton; Cancel stops):
@@ -267,6 +269,7 @@ python ableton_bridge.py [PRESET] [OPTIONS]
 | `--clip-port` | `11000` | AbletonOSC receive port |
 | `--clip-tempo` | off | Set Live's tempo to the generated tempo (plays exactly as generated; changes the global tempo) |
 | `--clip-advance` | off | If the target slot is occupied, write into the next empty slot below instead of overwriting |
+| `--measures-out` | `0` | Truncate the clip's loop to this many bars (0 = full; keeps all notes; ignored if ≥ the generated length) |
 | `--no-clip-fire` | — | Don't auto-fire the clip after writing |
 | `--no-clip-replace` | — | Don't delete an existing clip in the slot first |
 | `--loop` | off | Infinite loop: feed each output back as the next prompt, stacking clips down the column (implies `--clip`). Record once to seed; Cancel stops |
@@ -324,6 +327,7 @@ Any explicit flag overrides the preset default.
 | `/aria/track` | int | Target clip track (0-based) |
 | `/aria/slot` | int | Target clip slot (0-based) |
 | `/aria/fire` | `1` or `0` | Fire-on-write — auto-launch each clip as it's written |
+| `/aria/measures` | int | Truncate the clip loop to N bars (0 = full; keeps all notes; ignored if N ≥ the generated length) |
 
 **Outgoing (bridge → client)**
 
