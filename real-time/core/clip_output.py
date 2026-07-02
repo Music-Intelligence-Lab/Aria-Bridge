@@ -121,6 +121,57 @@ def query_tempo(host=DEFAULT_HOST, port=DEFAULT_PORT, recv_port=RECV_PORT, timeo
         return None
 
 
+def start_clip_record(host=DEFAULT_HOST, port=DEFAULT_PORT, track=0, slot=0,
+                      recv_port=RECV_PORT, auto_advance=True):
+    """Arm ``track`` and fire clip slot ``slot`` to begin native recording in Live.
+
+    This is how Aria's Record button drives Ableton to record your live playing into
+    a clip (the bridge still buffers the same MIDI over ARIA_IN for the prompt). If
+    ``auto_advance`` and the target slot already holds a clip, the first empty slot
+    at/below it is used instead — so an existing take is never overwritten.
+
+    Requires the input track's MIDI-From to be set to the same controller as ARIA_IN
+    (arming only enables record; it doesn't route input). Returns the slot actually
+    used, or -1 if python-osc is unavailable.
+    """
+    try:
+        from pythonosc import udp_client
+    except ImportError:
+        logger.error("python-osc not available; cannot start clip record.")
+        return -1
+    used_slot = slot
+    if auto_advance:
+        used_slot = find_first_empty_slot(host, port, track, slot)
+    client = udp_client.SimpleUDPClient(host, port)
+    client.send_message("/live/track/set/arm", [int(track), 1])
+    client.send_message("/live/clip_slot/fire", [int(track), int(used_slot)])
+    logger.info(
+        f"clip_output: armed track {track}, firing slot {used_slot} to record "
+        f"via AbletonOSC {host}:{port}"
+    )
+    return used_slot
+
+
+def stop_clip_record(host=DEFAULT_HOST, port=DEFAULT_PORT, track=0, disarm=True):
+    """Stop the recording clip on ``track`` (finalises the take) and optionally disarm.
+
+    Uses ``/live/track/stop_all_clips`` so the recording clip stops and becomes a
+    normal clip without launching into playback.
+    """
+    try:
+        from pythonosc import udp_client
+    except ImportError:
+        return
+    client = udp_client.SimpleUDPClient(host, port)
+    client.send_message("/live/track/stop_all_clips", [int(track)])
+    if disarm:
+        client.send_message("/live/track/set/arm", [int(track), 0])
+    logger.info(
+        f"clip_output: stopped clips + {'disarmed' if disarm else 'kept armed'} "
+        f"track {track} via AbletonOSC {host}:{port}"
+    )
+
+
 def _clip_lengths(end_beat, bpb, measures_out):
     """Return (clip_len, loop_len, play_len) in beats.
 
@@ -243,6 +294,26 @@ class AbletonOSCClient:
 
     def get_tempo(self):
         r = self.query("/live/song/get/tempo", [])
+        if r:
+            try:
+                return float(r[-1])
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def get_clip_is_playing(self, track, slot):
+        """True if the clip at (track, slot) is currently playing (not just triggered)."""
+        r = self.query("/live/clip/get/is_playing", [int(track), int(slot)])
+        if r:
+            try:
+                return bool(int(r[-1]))
+            except (ValueError, TypeError):
+                return False
+        return False
+
+    def get_clip_playing_position(self, track, slot):
+        """Current playback position of the clip at (track, slot), in beats. None if unknown."""
+        r = self.query("/live/clip/get/playing_position", [int(track), int(slot)])
         if r:
             try:
                 return float(r[-1])

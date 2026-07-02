@@ -39,6 +39,7 @@ class OscController:
         self.set_slot_cb = None
         self.set_fire_cb = None
         self.set_measures_cb = None
+        self.set_record_clip_cb = None
         self.server = None
         self.client = None
         self.stop_event = threading.Event()
@@ -90,6 +91,7 @@ class OscController:
         disp.map("/aria/slot", self._handle_slot)
         disp.map("/aria/fire", self._handle_fire)
         disp.map("/aria/measures", self._handle_measures)
+        disp.map("/aria/record_clip", self._handle_record_clip)
         disp.map("/cancel_playback", self._handle_cancel_playback)
         disp.map("/aria/ping", self._handle_ping)
         disp.map("/aria/play", self._handle_play)
@@ -423,6 +425,15 @@ class OscController:
         print(f"STATUS:param:fire:{flag}", flush=True)
         if self.set_fire_cb:
             self.set_fire_cb(flag)
+
+    def _handle_record_clip(self, addr, *args):
+        flag = self._coerce_flag(args[0]) if args else None
+        if flag is None:
+            return
+        logger.info(f"[OSC] record_clip -> {flag}")
+        print(f"STATUS:param:record_clip:{flag}", flush=True)
+        if self.set_record_clip_cb:
+            self.set_record_clip_cb(flag)
 
     def _handle_measures(self, addr, *args):
         if not args:

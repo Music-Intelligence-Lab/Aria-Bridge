@@ -199,3 +199,6 @@ TRACK.mid
 .claude-sessions/
 SYNC.md
 TODO.md
+
+# graphify knowledge graph — ignored by the main repo, synced via the context repo (scripts/context.ps1)
+graphify-out/

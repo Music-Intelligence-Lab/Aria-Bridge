@@ -484,6 +484,7 @@ def main():
     parser.add_argument("--loop", action="store_true", help="Infinite clip loop: feed each generated output back as the next prompt, writing clips down the column (implies --clip)")
     parser.add_argument("--loop-buffer", type=int, default=4, help="--loop: how many clips to keep generated ahead of the playing slot (default 4)")
     parser.add_argument("--loop-max-slot", type=int, default=7, help="--loop: bottom slot to stop at if Live's scene count is unavailable (default 7)")
+    parser.add_argument("--record-clip", action="store_true", help="Force native Ableton clip recording on Record even without clip output. NOTE: this is already ON by default whenever clip output is enabled (--clip/--loop) — records your playing into a clip on track (--track - 1), same slot (one slot under if occupied). Needs AbletonOSC + the input track's MIDI-From set to your controller.")
     parser.add_argument(
         "--osc-host",
         default="127.0.0.1",
@@ -704,6 +705,7 @@ def main():
                 loop_mode=args.loop,
                 loop_buffer=args.loop_buffer,
                 loop_max_slot=args.loop_max_slot,
+                record_clip=args.record_clip,
             )
             if osc:
                 osc.cancel_playback_cb = session.playback_cancel_event.set
@@ -719,6 +721,7 @@ def main():
                 osc.set_slot_cb = session.set_clip_slot
                 osc.set_fire_cb = session.set_clip_fire
                 osc.set_measures_cb = session.set_clip_measures
+                osc.set_record_clip_cb = session.set_record_clip
             if args.ui:
                 run_ui = _load_run_ui()
                 session_thread = threading.Thread(target=session.run, daemon=True)

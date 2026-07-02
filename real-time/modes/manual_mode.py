@@ -180,6 +180,7 @@ class ManualModeSession:
         loop_mode: bool = False,
         loop_buffer: int = 4,
         loop_max_slot: int = 7,
+        record_clip: bool = False,
     ):
         self.in_port_name = in_port_name
         self.out_port_name = out_port_name
@@ -225,6 +226,12 @@ class ManualModeSession:
         self.loop_mode = loop_mode
         self.loop_buffer = loop_buffer
         self.loop_max_slot = loop_max_slot
+        # Opt-in: on Record, drive Ableton to natively record your playing into a clip
+        # on the track before the output track (clip_track - 1), same slot (one slot
+        # under if occupied). The bridge still buffers ARIA_IN for the prompt.
+        self.record_clip = record_clip
+        self._rec_input_track = None   # track/slot of the in-progress native recording
+        self._rec_input_slot = None
         self.loop_running = False
         self.clip_index = 0  # increments per written clip -> "Output 1", "Output 2", ...
         self.pending_prompt_path = None  # recorded prompt kept to write as an input clip
@@ -453,8 +460,10 @@ class ManualModeSession:
             if self.osc_log_cb:
                 self.osc_log_cb(msg)
             # Pair: write the recorded input to the track before, at the same slot.
+            # Skipped when native record is active — Ableton already recorded the take
+            # there, so reconstructing it from the buffer would clobber it.
             input_track = self.clip_track - 1
-            if n >= 0 and input_track >= 0 and self.pending_prompt_path:
+            if n >= 0 and input_track >= 0 and self.pending_prompt_path and not self._native_record_active():
                 try:
                     send_midi_to_clip(
                         self.pending_prompt_path, track=input_track, slot=used_slot,
@@ -569,8 +578,57 @@ class ManualModeSession:
             self.session_state.set_recording(True)
         if self.osc_status_cb:
             self.osc_status_cb("RECORDING")
+        self._start_native_clip_record()
+
+    def _native_record_active(self):
+        """Whether Record should drive an Ableton clip recording.
+
+        Default: on whenever clip output is on (no extra M4L button needed) — the
+        recorded take pairs with the generated output. ``--record-clip`` forces it on
+        even without clip output. A future packaged app can expose an explicit toggle.
+        """
+        return bool(self.record_clip or self.clip_output)
+
+    def _start_native_clip_record(self):
+        """If enabled, arm+fire a clip on clip_track-1 so Live records the live take."""
+        if not self._native_record_active():
+            return
+        input_track = self.clip_track - 1
+        if input_track < 0:
+            return
+        try:
+            from core.clip_output import start_clip_record
+            used = start_clip_record(
+                host=self.clip_host, port=self.clip_port,
+                track=input_track, slot=self.clip_slot, auto_advance=True,
+            )
+            if used >= 0:
+                self._rec_input_track = input_track
+                self._rec_input_slot = used
+                self._log_ui(f"Ableton recording -> track {input_track} slot {used}")
+        except Exception:
+            logger.exception("[record-clip] failed to start Ableton recording")
+
+    def _stop_native_clip_record(self):
+        """Stop the in-progress native recording (finalises the take) and disarm."""
+        if self._rec_input_track is None:
+            return
+        try:
+            from core.clip_output import stop_clip_record
+            stop_clip_record(host=self.clip_host, port=self.clip_port,
+                             track=self._rec_input_track)
+            self._log_ui(f"Ableton recording stopped -> track {self._rec_input_track} slot {self._rec_input_slot}")
+        except Exception:
+            logger.exception("[record-clip] failed to stop Ableton recording")
+        finally:
+            self._rec_input_track = None
+            self._rec_input_slot = None
 
     # --- Live control setters (wired to OSC handlers; safe to call from the OSC thread) ---
+    def set_record_clip(self, on):
+        self.record_clip = bool(on)
+        self._log_ui(f"Record->Ableton clip {'ON' if self.record_clip else 'OFF'}")
+
     def set_clip_output(self, on):
         on = bool(on)
         self.clip_output = on
@@ -645,10 +703,10 @@ class ManualModeSession:
         return result[0]
 
     def _fire_scheduler(self, osc, tempo, fire_q, stop_evt):
-        """Fire queued clips one after another: fire a clip, wait its musical length
-        (beats / tempo), then fire the next. Avoids cutting off the clip already playing
-        on the track. With Live Global Quant = 1 Bar the launches land on the grid.
-        Runs until the sentinel (None) or stop_evt.
+        """Fire queued clips one after another: fire a clip, wait until Ableton reports
+        it has (nearly) finished its pass, then fire the next. Avoids cutting off the
+        clip already playing on the track. With Live Global Quant = 1 Bar the launches
+        land on the grid. Runs until the sentinel (None) or stop_evt.
         """
         import queue as _q
         while not stop_evt.is_set():
@@ -664,11 +722,48 @@ class ManualModeSession:
                 self._log_ui(f"Fired slot {slot}")
             except Exception:
                 logger.exception("[loop] fire failed")
-            # Wait this clip's length before firing the next (interruptible).
-            dur = max(0.1, length_beats * 60.0 / (tempo or 120.0))
-            end = time.monotonic() + dur
+            # Wait for the clip to actually finish (polled from Ableton), not a
+            # seconds estimate, before firing the next.
+            self._wait_for_clip_end(osc, slot, length_beats, tempo, stop_evt)
+
+    def _wait_for_clip_end(self, osc, slot, length_beats, tempo, stop_evt):
+        """Block until the clip on (clip_track, slot) is about to finish its pass, using
+        AbletonOSC playback position instead of a beats/tempo seconds estimate.
+
+        Two phases: (1) wait for the clip to actually start playing (Live's launch
+        quantization delays it past the fire), then (2) wait until its playing_position
+        enters the final bar — firing the next clip then lets Quant = 1 Bar hand over
+        exactly on the loop point. Falls back to a time-based wait if Ableton doesn't
+        answer, and is always bounded so it can't hang the loop.
+        """
+        bpb = self.beats_per_bar if self.beats_per_bar and self.beats_per_bar > 0 else 4
+        tempo = tempo or 120.0
+        # Fire the next clip once we're inside the last bar; Quant=1Bar aligns the switch
+        # to the loop point. For a 1-bar clip this is 0 (fire as soon as it's confirmed playing).
+        fire_at = max(0.0, length_beats - bpb)
+        est_s = max(0.1, length_beats * 60.0 / tempo)
+
+        # Phase 1: confirm the clip is playing (bounded by ~2 clip-lengths of grace).
+        started = False
+        start_deadline = time.monotonic() + max(4.0, 2.0 * est_s)
+        while not stop_evt.is_set() and time.monotonic() < start_deadline:
+            if osc.get_clip_is_playing(self.clip_track, slot):
+                started = True
+                break
+            time.sleep(0.05)
+        if not started:  # couldn't confirm via OSC — fall back to the seconds estimate
+            end = time.monotonic() + est_s
             while time.monotonic() < end and not stop_evt.is_set():
                 time.sleep(0.05)
+            return
+
+        # Phase 2: wait until it reaches the fire point (bounded so a missed reply can't hang).
+        hard_deadline = time.monotonic() + est_s + 6.0
+        while not stop_evt.is_set() and time.monotonic() < hard_deadline:
+            pos = osc.get_clip_playing_position(self.clip_track, slot)
+            if pos is not None and pos >= fire_at:
+                return
+            time.sleep(0.05)
 
     def _run_clip_loop(self, first_output_path, seed_input_path, temp, top_p, min_p, tokens):
         """Self-feeding clip loop: write the latest output as a clip, then generate the
@@ -739,7 +834,10 @@ class ManualModeSession:
                     if self.osc_log_cb:
                         self.osc_log_cb(f"Loop '{name}' -> slot {slot}")
                     # Pair: write this output's prompt to the track before it, same slot.
-                    if write_input and input_path:
+                    # Skip the seed (idx 1) when native record is active — Ableton already
+                    # recorded the live take into that slot; don't overwrite it.
+                    seed_recorded = idx == 1 and self._native_record_active()
+                    if write_input and input_path and not seed_recorded:
                         try:
                             osc.write_clip(
                                 input_path, input_track, slot, name=f"Input {idx}",
@@ -808,6 +906,7 @@ class ManualModeSession:
     def _finish_recording_and_generate(self):
         """Stop, generate, and arm playback (prompting for 'p')."""
         self.recording_flag.clear()
+        self._stop_native_clip_record()   # finalise the Ableton take before generating
         self.stop_time = time.monotonic()
         duration = (self.stop_time - self.start_time) if self.start_time else 0.0
         logger.info(f"[manual] Recording stopped at {self.stop_time:.3f} (duration={duration:.2f}s)")

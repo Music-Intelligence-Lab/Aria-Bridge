@@ -1,6 +1,7 @@
 # Sync the private "context" repo (separate git dir over THIS worktree) that versions the
-# gitignored context files (STATUS.md, CLAUDE.md, design docs, dev tools, Track.mid) plus,
-# best-effort, the Claude session transcripts — without touching the main Aria-Bridge repo.
+# gitignored context files (STATUS.md, CLAUDE.md, design docs, dev tools, Track.mid, the
+# graphify-out/ knowledge graph) plus, best-effort, the Claude session transcripts — without
+# touching the main Aria-Bridge repo.
 #
 #   scripts\context.ps1 clone <url>   # first-time setup on a new machine
 #   scripts\context.ps1 save ["msg"]  # mirror sessions, add context files, commit, push
@@ -15,7 +16,7 @@ function Ctx { & git --git-dir="$GD" --work-tree="$Root" @args }
 $Files = @("CLAUDE.md","STATUS.md","SYNC.md","tasks.md","ARIA_Model.pdf",
   "real-time/docs/TEMPO_AND_TIMING.md","real-time/docs/TOKENS_AND_CLOCK.md",
   "real-time/tools/count_tokens.py","real-time/tools/midi_to_clip.py",
-  "scripts/list_midi_ports.py","real-time/tests/Track.mid",".claude-sessions")
+  "scripts/list_midi_ports.py","real-time/tests/Track.mid","graphify-out",".claude-sessions")
 
 function Claude-Dir {
   $base = Join-Path $env:USERPROFILE ".claude\projects"
@@ -51,7 +52,15 @@ switch ($cmd) {
   }
   "save" {
     Sessions-ToRepo
-    foreach ($f in $Files) { if (Test-Path (Join-Path $Root $f)) { Ctx add -f $f } }
+    foreach ($f in $Files) {
+      if (Test-Path (Join-Path $Root $f)) {
+        if ($f -eq "graphify-out") {
+          # Sync the graph but skip machine-specific interpreter/root paths (they'd
+          # flip-flop and conflict between Windows and Mac).
+          Ctx add -f $f ':!graphify-out/.graphify_python' ':!graphify-out/.graphify_root'
+        } else { Ctx add -f $f }
+      }
+    }
     $msg = if ($rest.Count -gt 0) { $rest[0] } else { "context update" }
     Ctx commit -m $msg; Ctx push
   }
