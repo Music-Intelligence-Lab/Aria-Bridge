@@ -844,6 +844,21 @@ class ManualModeSession:
         else:
             logger.info("[manual] Could not infer BPM; using default 120 BPM conversion.")
 
+        # For clip output, place the recording on Ableton's ACTUAL Set tempo (what you
+        # recorded to with the metronome) instead of the inferred BPM — otherwise the
+        # input clip comes back stretched / off-beat. Changing the tempo here does not
+        # change what Aria generates (the absolute-time performance is invariant); it only
+        # fixes the beat grid used for the clip.
+        if self.clip_output:
+            try:
+                from core.clip_output import query_tempo
+                set_bpm = query_tempo(self.clip_host, self.clip_port)
+            except Exception:
+                set_bpm = None
+            if set_bpm:
+                logger.info(f"[manual] Using Ableton Set tempo {set_bpm:.2f} for clip placement (inferred was {bpm})")
+                bpm = set_bpm
+
         prompt_midi_path = buffer_to_tempfile_midi(
             messages=self.recorded,
             window_seconds=duration,

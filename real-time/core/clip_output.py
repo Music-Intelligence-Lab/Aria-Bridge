@@ -81,6 +81,46 @@ def find_first_empty_slot(host, port, track, start_slot, recv_port=RECV_PORT,
     return found
 
 
+def query_tempo(host=DEFAULT_HOST, port=DEFAULT_PORT, recv_port=RECV_PORT, timeout=0.5):
+    """One-shot query of Ableton's Set tempo (BPM) via AbletonOSC. Returns float or None.
+
+    Used to place a recorded performance on Live's actual beat grid (the tempo you
+    recorded to) instead of an inferred BPM.
+    """
+    try:
+        from pythonosc import udp_client, dispatcher, osc_server
+        import threading
+        import time
+    except ImportError:
+        return None
+
+    result = {}
+
+    def _on(addr, *a):
+        if a:
+            result["bpm"] = a[-1]
+
+    disp = dispatcher.Dispatcher()
+    disp.map("/live/song/get/tempo", _on)
+    try:
+        server = osc_server.ThreadingOSCUDPServer((host, recv_port), disp)
+    except Exception as e:
+        logger.warning(f"query_tempo: cannot open reply listener on {recv_port}: {e}")
+        return None
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        udp_client.SimpleUDPClient(host, port).send_message("/live/song/get/tempo", [])
+        deadline = time.time() + timeout
+        while time.time() < deadline and "bpm" not in result:
+            time.sleep(0.01)
+    finally:
+        server.shutdown()
+    try:
+        return float(result["bpm"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _clip_lengths(end_beat, bpb, measures_out):
     """Return (clip_len, loop_len, play_len) in beats.
 
