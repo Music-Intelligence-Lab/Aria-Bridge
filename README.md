@@ -33,13 +33,15 @@ The Windows backend (`aria_backend.exe`) is too large to include in the release 
 
 1. Go to the [Aria Bridge releases on HuggingFace](https://huggingface.co/Anthony-Haber/Aria_Bridge_releases/tree/main)
 2. Download **`aria_backend.exe`**
-3. Place it directly inside your Aria Bridge folder, next to `AriaLauncher.exe`
+3. Place it directly inside your Aria Bridge folder, next to the plugin
 
 ```
 Aria Bridge/
-  AriaLauncher.exe
+  Aria Bridge.exe    (standalone plugin)
+  Aria Bridge.vst3   (VST3 plugin)
   aria_backend.exe   ← goes here
   models/
+  ableton/
   ...
 ```
 
@@ -105,18 +107,26 @@ Put an instrument on Track 2 so you can hear Aria's output.
 
 ## Step 6 — Launch Aria Bridge
 
-### Windows
+> **Note:** the one-click graphical launcher is being rebuilt. For now you start the backend
+> from a terminal, then use the plugin or Max for Live device. Everything below works the same
+> once it's running.
 
-Double-click **AriaLauncher.exe**. A small window appears — select your mode:
+### 1. Start the backend
 
-- **M4L Device** — use this if you are running the included Max for Live device inside Ableton
-- **Plugin (VST3 / Standalone)** — use this for the VST3 plugin in any DAW, or the standalone window
+Open a terminal **in your Aria Bridge folder** and run:
 
-When the status dot turns green and says **Ready**, Aria Bridge is connected.
+- **Windows:** `.\aria_backend.exe plugin --checkpoint models\model-gen.safetensors`
+- **macOS:** `./aria_backend plugin --checkpoint models/model-gen.safetensors`
 
-### macOS
+The backend auto-detects your GPU (CUDA on Windows, MLX on Apple Silicon, else CPU). When it prints
+`STATUS:ready`, it's connected. Leave this window open while you play.
 
-Double-click **Aria Bridge.app**. The app opens and the backend starts automatically in the background. When the status shows **IDLE**, it is ready.
+### 2. Use it from your DAW
+
+- **M4L Device** — load the included Max for Live device inside Ableton, or
+- **Plugin (VST3 / Standalone)** — load `Aria Bridge.vst3` in any DAW, or open the `Aria Bridge` standalone.
+
+The plugin/device talks to the running backend over OSC.
 
 ---
 
@@ -179,7 +189,7 @@ That's it — Live's log will show `AbletonOSC: Listening for OSC on port 11000`
 ## Troubleshooting
 
 **Status shows DISCONNECTED**
-The backend did not start. On Windows, make sure `aria_backend.exe` is downloaded from HuggingFace and placed in the same folder as `AriaLauncher.exe` (see Step 2). On Mac, make sure the backend binary is present inside the app bundle.
+The backend isn't running. Start it from a terminal as in Step 6 and leave that window open. On Windows, make sure `aria_backend.exe` was downloaded from HuggingFace and placed in your Aria Bridge folder (see Step 2). Check the terminal for an error if it exits immediately.
 
 **No MIDI is being captured**
 Check that your virtual MIDI ports exist and are named exactly `ARIA_IN` and `ARIA_OUT`. On Windows, make sure loopMIDI is running. Check your DAW track routing.

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Sync the private "context" repo: a separate git dir over THIS worktree that versions
 # the gitignored context files (STATUS.md, CLAUDE.md, design docs, dev tools, Track.mid,
-# the graphify-out/ knowledge graph) plus, best-effort, the Claude session transcripts — so
-# they move between machines without touching the main Aria-Bridge repo.
+# the graphify-out/ knowledge graph, the .specify/ spec-kit workspace) plus, best-effort, the
+# Claude session transcripts — so they move between machines without touching the main repo.
 #
 #   scripts/context.sh clone <url>   # first-time setup on a new machine
 #   scripts/context.sh save ["msg"]  # mirror sessions, add context files, commit, push
@@ -16,7 +16,7 @@ CTX() { git --git-dir="$GD" --work-tree="$ROOT" "$@"; }
 FILES=(CLAUDE.md STATUS.md SYNC.md tasks.md TODO.md ARIA_Model.pdf
   real-time/docs/TEMPO_AND_TIMING.md real-time/docs/TOKENS_AND_CLOCK.md
   real-time/tools/count_tokens.py real-time/tools/midi_to_clip.py
-  scripts/list_midi_ports.py real-time/tests/Track.mid graphify-out .claude-sessions)
+  scripts/list_midi_ports.py real-time/tests/Track.mid graphify-out .specify .claude-sessions)
 
 # This machine's Claude transcript dir for THIS project (best-effort; slug differs per OS).
 claude_dir() {

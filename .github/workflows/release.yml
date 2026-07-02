@@ -53,42 +53,18 @@ jobs:
       - name: Mark aria_backend executable
         run: chmod +x dist/aria_backend
 
-      # ── Electron launcher → AriaLauncher-mac.zip ─────────────────────────
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Cache electron-builder binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/electron-builder
-          key: electron-builder-mac-${{ hashFiles('front-end/package-lock.json') }}
-          restore-keys: electron-builder-mac-
-
-      - name: Install launcher dependencies
-        working-directory: front-end
-        run: npm install
-
-      - name: Prepare resource folders for electron-builder
-        run: |
-          mkdir -p models feedback
-
-      - name: Build AriaLauncher (mac)
-        working-directory: front-end
-        run: npm run build:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── Package release zip ───────────────────────────────────────────────
+      # ── Package release zip (plugin + backend as loose artifacts) ─────────
+      # The Electron launcher was removed; ship the JUCE Standalone/VST3 plugin and
+      # the PyInstaller backend directly. A new front-end will be rebuilt later.
       - name: Create release zip
         run: |
           ZIP="AriaBridge-${{ github.ref_name }}-macos.zip"
           STAGING="staging"
-          mkdir -p "$STAGING/models"
+          mkdir -p "$STAGING/models" "$STAGING/feedback"
 
-          unzip dist/AriaLauncher-mac.zip -d "$STAGING"
-
-          mkdir -p "$STAGING/feedback"
+          cp -r "dist/Aria Bridge.app" "$STAGING/Aria Bridge.app"
+          cp -r "dist/Aria Bridge.vst3" "$STAGING/Aria Bridge.vst3"
+          cp "dist/aria_backend" "$STAGING/aria_backend"
           cp -r "real-time/ableton" "$STAGING/ableton"
           cp README.md "$STAGING/README.md"
           printf "Download model-gen.safetensors from HuggingFace and place it in this folder." \

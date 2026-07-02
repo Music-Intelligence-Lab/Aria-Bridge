@@ -1,7 +1,7 @@
 # Sync the private "context" repo (separate git dir over THIS worktree) that versions the
 # gitignored context files (STATUS.md, CLAUDE.md, design docs, dev tools, Track.mid, the
-# graphify-out/ knowledge graph) plus, best-effort, the Claude session transcripts — without
-# touching the main Aria-Bridge repo.
+# graphify-out/ knowledge graph, the .specify/ spec-kit workspace) plus, best-effort, the
+# Claude session transcripts — without touching the main Aria-Bridge repo.
 #
 #   scripts\context.ps1 clone <url>   # first-time setup on a new machine
 #   scripts\context.ps1 save ["msg"]  # mirror sessions, add context files, commit, push
@@ -16,7 +16,7 @@ function Ctx { & git --git-dir="$GD" --work-tree="$Root" @args }
 $Files = @("CLAUDE.md","STATUS.md","SYNC.md","tasks.md","ARIA_Model.pdf",
   "real-time/docs/TEMPO_AND_TIMING.md","real-time/docs/TOKENS_AND_CLOCK.md",
   "real-time/tools/count_tokens.py","real-time/tools/midi_to_clip.py",
-  "scripts/list_midi_ports.py","real-time/tests/Track.mid","graphify-out",".claude-sessions")
+  "scripts/list_midi_ports.py","real-time/tests/Track.mid","graphify-out",".specify",".claude-sessions")
 
 function Claude-Dir {
   $base = Join-Path $env:USERPROFILE ".claude\projects"

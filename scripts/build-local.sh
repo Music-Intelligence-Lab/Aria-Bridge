@@ -4,30 +4,31 @@
 # already exists. Delete the relevant artifact to force a rebuild.
 #
 # Produces an ad-hoc-signed (unsigned for distribution) build. Fine for running
-# on your own Mac; other Macs will need: xattr -dr com.apple.quarantine "Aria Launcher.app"
+# on your own Mac; other Macs will need: xattr -dr com.apple.quarantine "Aria Bridge.app"
+#
+# Builds the JUCE plugin (Standalone + VST3) and the PyInstaller backend as loose
+# artifacts. The Electron launcher was removed; a new front-end will be rebuilt later.
 #
 # Usage:
 #   ./build-local.sh                       # build everything into ~/Downloads/AriaBridge
 #   ./build-local.sh --out /path/to/dir    # custom output dir
 #   ./build-local.sh --skip-juce           # reuse existing JUCE artifacts
 #   ./build-local.sh --skip-backend        # reuse existing dist/aria_backend
-#   ./build-local.sh --skip-frontend       # reuse existing launcher build
 #
-# Prereqs: Xcode + CommandLineTools, CMake, Node.js, a Python 3.11 venv with
+# Prereqs: Xcode + CommandLineTools, CMake, a Python 3.11 venv with
 #   real-time/requirements.txt installed plus pyinstaller. Activate it first.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$HOME/Downloads/AriaBridge"
-SKIP_JUCE=0; SKIP_BACKEND=0; SKIP_FRONTEND=0
+SKIP_JUCE=0; SKIP_BACKEND=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --out) OUT="$2"; shift 2 ;;
         --skip-juce) SKIP_JUCE=1; shift ;;
         --skip-backend) SKIP_BACKEND=1; shift ;;
-        --skip-frontend) SKIP_FRONTEND=1; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -39,7 +40,6 @@ warn() { printf '    %s\n' "$1"; }
 SECONDS=0
 
 step "Killing any running Aria processes..."
-pkill -f "Aria Launcher" 2>/dev/null || true
 pkill -f "aria_backend"  2>/dev/null || true
 pkill -f "Aria Bridge"   2>/dev/null || true
 sleep 1
@@ -50,7 +50,6 @@ JUCE_BASE="$ROOT/real-time/Plugin/build/AriaBridge_artefacts/Release"
 JUCE_APP="$JUCE_BASE/Standalone/Aria Bridge.app"
 JUCE_VST="$JUCE_BASE/VST3/Aria Bridge.vst3"
 BACKEND_BIN="$ROOT/dist/aria_backend"
-LAUNCHER_ZIP="$ROOT/dist/AriaLauncher-mac.zip"
 
 # ── 1. JUCE: Standalone (.app) + VST3 ─────────────────────────────────────────
 if [ "$SKIP_JUCE" = 1 ]; then
@@ -69,7 +68,7 @@ fi
 step "Ad-hoc signing the standalone..."
 codesign --force --deep --sign - "$JUCE_APP"
 
-# Stage JUCE artifacts into dist/ (where electron-builder expects them).
+# Stage JUCE artifacts into dist/.
 rm -rf "$ROOT/dist/Aria Bridge.app" "$ROOT/dist/Aria Bridge.vst3"
 cp -R "$JUCE_APP" "$ROOT/dist/Aria Bridge.app"
 cp -R "$JUCE_VST" "$ROOT/dist/Aria Bridge.vst3"
@@ -88,26 +87,15 @@ else
 fi
 done_ "aria_backend ready in dist/."
 
-# ── 3. Electron launcher → dist/AriaLauncher-mac.zip ──────────────────────────
-if [ "$SKIP_FRONTEND" = 1 ]; then
-    warn "Skipping electron-builder (flag set)."
-elif [ -f "$LAUNCHER_ZIP" ]; then
-    warn "dist/AriaLauncher-mac.zip found, skipping electron-builder. Delete it to rebuild."
-else
-    step "Building AriaLauncher (electron-builder, mac arm64)..."
-    mkdir -p "$ROOT/models" "$ROOT/feedback"
-    ( cd "$ROOT/front-end" && npm install && npm run build:mac )
-fi
-done_ "AriaLauncher built."
-
-# ── 4. Package into $OUT ──────────────────────────────────────────────────────
+# ── 3. Package into $OUT (loose plugin + backend) ─────────────────────────────
 step "Packaging into $OUT ..."
 rm -rf "$OUT"
 mkdir -p "$OUT/models" "$OUT/feedback"
 
-# Electron app (.app + bundled backend/plugin in its Resources).
-unzip -q "$LAUNCHER_ZIP" -d "$OUT"
-done_ "Electron app unpacked."
+cp -R "$ROOT/dist/Aria Bridge.app" "$OUT/Aria Bridge.app"
+cp -R "$ROOT/dist/Aria Bridge.vst3" "$OUT/Aria Bridge.vst3"
+cp "$BACKEND_BIN" "$OUT/aria_backend"
+done_ "Plugin + backend copied."
 
 # Ableton MIDI device + set.
 cp -R "$ROOT/real-time/ableton" "$OUT/ableton"
@@ -128,5 +116,5 @@ fi
 
 printf '\nBuild complete in %ds\n' "$SECONDS"
 printf 'Output: %s\n' "$OUT"
-printf 'Launch: open "%s/Aria Launcher.app"\n' "$OUT"
-printf 'First run on another Mac: xattr -dr com.apple.quarantine "%s/Aria Launcher.app"\n' "$OUT"
+printf 'Launch: open "%s/Aria Bridge.app"\n' "$OUT"
+printf 'First run on another Mac: xattr -dr com.apple.quarantine "%s/Aria Bridge.app"\n' "$OUT"

@@ -21,10 +21,12 @@
 
 Aria-Bridge records human MIDI input via virtual MIDI ports, converts it into a prompt, runs it through the Aria transformer model for music generation, and plays the generated continuation back — triggered manually via the plugin or M4L device.
 
-**Three physical components:**
+**Two physical components:**
 - **Python backend** (`real-time/`) all logic lives here
 - **VST3/standalone plugin** (`real-time/Plugin/`) JUCE C++ UI that sends OSC commands to the backend
-- **Electron launcher** (`front-end/`) starts the backend process and surfaces status
+
+(A one-click launcher/front-end that started the backend and surfaced status used to live in
+`front-end/`; it was removed and will be rebuilt later. Start the backend from a terminal for now.)
 
 **Two virtual MIDI cables** (created in loopMIDI on Windows, IAC Driver on Mac):
 - `ARIA_IN` you play into this from Ableton
@@ -76,7 +78,7 @@ On Mac with Apple Silicon it tries `mlx` first. On Windows/Linux it tries CUDA. 
 def find_checkpoint(checkpoint_hint):
 ```
 
-If you pass `--checkpoint path/to/model.safetensors` it tries that path directly, then relative to the script, then relative to the repo root. If you pass nothing, it scans a `models/` folder next to the executable (or script), picks the most recently modified `.safetensors` or `.gen` file. This is how the Electron launcher's "just works" experience works — it drops the model in `models/` and the backend finds it automatically.
+If you pass `--checkpoint path/to/model.safetensors` it tries that path directly, then relative to the script, then relative to the repo root. If you pass nothing, it scans a `models/` folder next to the executable (or script), picks the most recently modified `.safetensors` or `.gen` file. This gives a "just works" experience — drop the model in `models/` and the backend finds it automatically (what a launcher/front-end relies on).
 
 ### Shared State Initialization
 
@@ -112,7 +114,7 @@ engine = AriaEngine(
 print("STATUS:ready", flush=True)
 ```
 
-`STATUS:ready` printed to stdout is how the Electron launcher knows the backend is ready. `main.js` parses lines starting with `STATUS:` from the backend's stdout.
+`STATUS:ready` printed to stdout is how a launcher/front-end knows the backend is ready: it parses lines starting with `STATUS:` from the backend's stdout. (The old Electron launcher used this; the contract is kept for whatever front-end replaces it.)
 
 ### FeedbackManager
 
