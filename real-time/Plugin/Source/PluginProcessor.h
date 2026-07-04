@@ -10,16 +10,14 @@ class AriaBridgeAudioProcessor final : public juce::AudioProcessor,
                                        private juce::MidiInputCallback
 {
 public:
+    // Knobs first (temp..grade), then buttons (record..cancel). `record` marks the
+    // knob/button boundary; anything >= record is a momentary/toggle button.
     enum class ControlId
     {
         temp = 0,
         topP,
         minP,
         tokens,
-        coherence,
-        taste,
-        repetition,
-        continuity,
         grade,
         record,
         sync,
@@ -36,6 +34,7 @@ public:
         float temp = 0.0f;
         float topP = 0.0f;
         float minP = 0.0f;
+        bool connected = false;
     };
 
     AriaBridgeAudioProcessor();
@@ -90,7 +89,6 @@ private:
     void handleIncomingOSCMessage(const void* data, size_t sizeInBytes);
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
     void handleMidiMessage(const juce::MidiMessage& message);
-    void launchBackendProcessIfNeeded();
     void startStandaloneMidiInputs();
     void stopStandaloneMidiInputs();
 
@@ -111,7 +109,7 @@ private:
     std::vector<std::unique_ptr<juce::MidiInput>> standaloneMidiInputs;
 
     juce::DatagramSocket oscSenderSocket;
-    juce::ChildProcess backendProcess;
     std::unique_ptr<OSCReceiverThread> oscReceiverThread;
     AriaBridgeAudioProcessorEditor* activeEditor = nullptr;
+    std::atomic<juce::int64> lastOscMessageMs { 0 };
 };

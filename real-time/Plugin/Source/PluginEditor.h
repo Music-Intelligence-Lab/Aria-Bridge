@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 
+// Slider that opens a MIDI-learn context menu on right-click instead of dragging.
 class LearnableSlider final : public juce::Slider
 {
 public:
@@ -19,6 +20,7 @@ public:
     }
 };
 
+// Button that opens a MIDI-learn context menu on right-click.
 class MidiLearnButton final : public juce::TextButton
 {
 public:
@@ -36,6 +38,8 @@ public:
     }
 };
 
+// Valhalla-descended look: near-black canvas, flat indicator-line knobs whose accent is read
+// per-slider from rotarySliderFillColourId, plus a "hero" property for the big filled knob.
 class AriaLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
@@ -77,33 +81,26 @@ public:
     void setGenerationActive(bool active);
     void setPlaybackDuration(float seconds);
     void setPlaybackProgress(float value);
+    void setGenerationProgress(float value);
     void stopPlayback();
 
 private:
-    void configureFloatKnob(LearnableSlider& slider,
-                            juce::Label& nameLabel,
-                            juce::Label& valueLabel,
-                            const juce::String& name,
-                            double minimum,
-                            double maximum,
-                            double defaultValue,
-                            const juce::String& oscAddress,
-                            AriaBridgeAudioProcessor::ControlId controlId);
+    void configureKnob(LearnableSlider& slider,
+                       juce::Label& nameLabel,
+                       juce::Label& valueLabel,
+                       const juce::String& name,
+                       double minimum,
+                       double maximum,
+                       double interval,
+                       double defaultValue,
+                       const juce::String& oscAddress,
+                       AriaBridgeAudioProcessor::ControlId controlId,
+                       juce::Colour accent,
+                       bool hero);
 
-    void configureIntKnob(LearnableSlider& slider,
-                          juce::Label& nameLabel,
-                          juce::Label& valueLabel,
-                          const juce::String& name,
-                          int minimum,
-                          int maximum,
-                          int defaultValue,
-                          const juce::String& oscAddress,
-                          AriaBridgeAudioProcessor::ControlId controlId);
-
-    void configureActionButton(MidiLearnButton& button, const juce::String& text);
-    void configureNameLabel(juce::Label& label, const juce::String& text);
+    void configureActionButton(MidiLearnButton& button, const juce::String& text, juce::Colour accent);
+    void configureNameLabel(juce::Label& label, const juce::String& text, juce::Colour accent);
     void configureValueLabel(juce::Label& label);
-    void updateRecordButtonAppearance();
     void refreshValueLabel(AriaBridgeAudioProcessor::ControlId controlId);
     void showSliderContextMenu(AriaBridgeAudioProcessor::ControlId controlId);
     void showButtonContextMenu(AriaBridgeAudioProcessor::ControlId buttonId);
@@ -111,8 +108,10 @@ private:
     MidiLearnButton& getButtonForControl(AriaBridgeAudioProcessor::ControlId buttonId);
     juce::Label& getValueLabelForControl(AriaBridgeAudioProcessor::ControlId controlId);
     void configureStandaloneWindowIfNeeded();
+    void layoutKnob(LearnableSlider& slider, juce::Label& nameLabel, juce::Label& valueLabel,
+                    juce::Rectangle<int> cell, int knobSize);
+    void drawPanel(juce::Graphics& g, juce::Rectangle<int> r, juce::Colour accent, const juce::String& head);
     void timerCallback() override;
-    int statusBarHeight() const noexcept { return juce::jmax(44, juce::roundToInt(getHeight() * 0.14f)); }
 
     AriaBridgeAudioProcessor& audioProcessor;
 
@@ -120,52 +119,43 @@ private:
     LearnableSlider topPSlider;
     LearnableSlider minPSlider;
     LearnableSlider tokensSlider;
-
-    LearnableSlider coherenceSlider;
-    LearnableSlider tasteSlider;
-    LearnableSlider repetitionSlider;
-    LearnableSlider continuitySlider;
     LearnableSlider gradeSlider;
 
     juce::Label tempLabel;
     juce::Label topPLabel;
     juce::Label minPLabel;
     juce::Label tokensLabel;
-
-    juce::Label coherenceLabel;
-    juce::Label tasteLabel;
-    juce::Label repetitionLabel;
-    juce::Label continuityLabel;
     juce::Label gradeLabel;
 
     juce::Label tempValueLabel;
     juce::Label topPValueLabel;
     juce::Label minPValueLabel;
     juce::Label tokensValueLabel;
-
-    juce::Label coherenceValueLabel;
-    juce::Label tasteValueLabel;
-    juce::Label repetitionValueLabel;
-    juce::Label continuityValueLabel;
     juce::Label gradeValueLabel;
 
     MidiLearnButton recordButton;
-    MidiLearnButton syncButton;
-    MidiLearnButton commitButton;
     MidiLearnButton playButton;
     MidiLearnButton cancelButton;
+    MidiLearnButton syncButton;
+    MidiLearnButton commitButton;
 
     juce::Label statusLabel;
     juce::Label logLabel;
+    juce::Label progressLabel;
 
-    double generationProgress = -1.0;
-    double playbackProgress = 0.0;
-    double playbackTotalDuration = 0.0;
+    // Panel rectangles (computed in resized, drawn in paint).
+    juce::Rectangle<int> samplingPanel, transportPanel, feedbackPanel, playbackPanel, barRect, statusStrip;
+
+    // Animation / live state.
+    double phase = 0.0;
+    bool isGenerating = false;
+    double genStartMs = 0.0;
     int generationElapsedSec = 0;
-    juce::ProgressBar generationBar { generationProgress };
-    juce::ProgressBar playbackBar { playbackProgress };
-    juce::Label generationLabel;
-    juce::Label playbackLabel;
+    double playbackTarget = 0.0;
+    double playbackDisplayed = 0.0;
+    double playbackTotalDuration = 0.0;
+    double genProgress = 0.0;
+    float uiScale = 1.0f;
 
     AriaLookAndFeel lookAndFeel;
     juce::ComponentBoundsConstrainer windowConstrainer;

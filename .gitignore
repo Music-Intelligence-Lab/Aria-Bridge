@@ -205,3 +205,4 @@ graphify-out/
 
 # spec-kit workspace — ignored by the main repo, synced via the context repo (scripts/context.ps1)
 .specify/
+MODEL_TRAINING.md

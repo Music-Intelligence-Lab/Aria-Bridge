@@ -26,10 +26,6 @@ constexpr std::array<ControlSpec, knobCount> controlSpecs {{
     { "/aria/top_p", 0.1, 1.0, false },
     { "/aria/min_p", 0.0, 0.3, false },
     { "/aria/tokens", 0.0, 2048.0, true },
-    { "/aria/coherence", 1.0, 5.0, true },
-    { "/aria/taste", 1.0, 5.0, true },
-    { "/aria/repetition", 1.0, 5.0, true },
-    { "/aria/continuity", 1.0, 5.0, true },
     { "/aria/grade", 1.0, 5.0, true },
 }};
 
@@ -43,24 +39,12 @@ float roundToTwoDecimals(float value)
     return std::round(value * 100.0f) / 100.0f;
 }
 
-float normaliseOscFloatValue(const juce::String& address, float value)
-{
-    if (address == "/aria/temp" || address == "/aria/top_p" || address == "/aria/min_p")
-        return roundToTwoDecimals(value);
-
-    return value;
-}
-
 int normaliseOscIntValue(const juce::String& address, int value)
 {
     if (address == "/aria/tokens")
         return juce::jlimit(0, 2048, value);
 
-    if (address == "/aria/coherence"
-        || address == "/aria/taste"
-        || address == "/aria/repetition"
-        || address == "/aria/continuity"
-        || address == "/aria/grade")
+    if (address == "/aria/grade")
         return juce::jlimit(1, 5, value);
 
     if (address == "/aria/record")
@@ -160,6 +144,19 @@ bool readFloat32(const char* data, size_t size, size_t& offset, float& value)
     return true;
 }
 
+bool readInt32(const char* data, size_t size, size_t& offset, int& value)
+{
+    if ((offset + sizeof(juce::uint32)) > size)
+        return false;
+
+    juce::uint32 encoded = 0;
+    std::memcpy(&encoded, data + offset, sizeof(encoded));
+    offset += sizeof(encoded);
+
+    value = static_cast<int>(juce::ByteOrder::swapIfLittleEndian(encoded));
+    return true;
+}
+
 juce::MemoryBlock buildOSCMessage(const juce::String& address, const juce::String& typeTags)
 {
     juce::MemoryBlock packet;
@@ -240,8 +237,9 @@ AriaBridgeAudioProcessor::AriaBridgeAudioProcessor()
     pendingMidiValueDirty.fill(false);
     oscReceiverThread = std::make_unique<OSCReceiverThread>(*this);
     oscReceiverThread->startThread();
+    // Ping the backend every 2s so status/params refresh. The plugin is a pure OSC
+    // client — the backend is started separately (from a terminal / future launcher).
     startTimer(2000);
-    launchBackendProcessIfNeeded();
     startStandaloneMidiInputs();
 }
 
@@ -251,7 +249,6 @@ AriaBridgeAudioProcessor::~AriaBridgeAudioProcessor()
     cancelPendingUpdate();
     activeEditor = nullptr;
     stopStandaloneMidiInputs();
-    backendProcess.kill();
 
     if (oscReceiverThread != nullptr)
     {
@@ -279,6 +276,8 @@ void AriaBridgeAudioProcessor::processBlock(juce::AudioBuffer<float>& audioBuffe
 {
     juce::ScopedNoDenormals noDenormals;
 
+    // Control surface only — MIDI reaches the backend over the ARIA_IN virtual port,
+    // not through this plugin. We just watch for MIDI-learn CC/note triggers.
     for (const auto metadata : midiMessages)
         handleMidiMessage(metadata.getMessage());
 
@@ -404,8 +403,7 @@ void AriaBridgeAudioProcessor::setStateInformation(const void* data, int sizeInB
 
 void AriaBridgeAudioProcessor::sendOSC(const juce::String& address, float value)
 {
-    const juce::String rounded = juce::String(value, 2);
-    value = rounded.getFloatValue();
+    value = roundToTwoDecimals(value);
     const auto packet = buildOSCMessage(address, value);
     const juce::ScopedLock lock(oscSendLock);
     oscSenderSocket.write(oscHost, oscSendPort, packet.getData(), static_cast<int>(packet.getSize()));
@@ -465,12 +463,17 @@ AriaBridgeAudioProcessor::OSCStateSnapshot AriaBridgeAudioProcessor::getOSCState
 {
     const juce::ScopedLock lock(oscStateLock);
 
+    const auto now = juce::Time::currentTimeMillis();
+    const auto last = lastOscMessageMs.load();
+    const bool connected = (last != 0) && ((now - last) < 4000);
+
     return OSCStateSnapshot {
         currentStatus,
         lastLog,
         temp,
         topP,
-        minP
+        minP,
+        connected
     };
 }
 
@@ -531,6 +534,9 @@ void AriaBridgeAudioProcessor::timerCallback()
 
 void AriaBridgeAudioProcessor::handleIncomingOSCMessage(const void* data, size_t sizeInBytes)
 {
+    // Any datagram from the backend proves it is alive — drives the connection indicator.
+    lastOscMessageMs.store(juce::Time::currentTimeMillis());
+
     const auto* bytes = static_cast<const char*>(data);
     size_t offset = 0;
 
@@ -617,6 +623,22 @@ void AriaBridgeAudioProcessor::handleIncomingOSCMessage(const void* data, size_t
             if (activeEditor != nullptr)
                 activeEditor->setGenerationActive(false);
         });
+        return;
+    }
+
+    if (address == "/generation_progress" && typeTags == ",i")
+    {
+        int percent = 0;
+
+        if (readInt32(bytes, sizeInBytes, offset, percent))
+        {
+            juce::MessageManager::callAsync([this, percent]
+            {
+                if (activeEditor != nullptr)
+                    activeEditor->setGenerationProgress(static_cast<float>(percent) / 100.0f);
+            });
+        }
+
         return;
     }
 
@@ -757,45 +779,6 @@ void AriaBridgeAudioProcessor::handleMidiMessage(const juce::MidiMessage& messag
 
     if (shouldTrigger)
         triggerAsyncUpdate();
-}
-
-void AriaBridgeAudioProcessor::launchBackendProcessIfNeeded()
-{
-    if (wrapperType != wrapperType_Standalone)
-        return;
-
-    juce::File exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
-
-   #if JUCE_MAC
-    juce::File launcherScript = exeDir.getChildFile("start.sh");
-   #else
-    juce::File launcherScript = exeDir.getChildFile("start.bat");
-   #endif
-
-    if (! launcherScript.existsAsFile())
-    {
-        {
-            const juce::ScopedLock lock(oscStateLock);
-            currentStatus = "ERROR: " + launcherScript.getFileName() + " not found";
-        }
-
-        triggerAsyncUpdate();
-        return;
-    }
-
-    {
-        const juce::ScopedLock lock(oscStateLock);
-        lastLog = "Launching backend: " + launcherScript.getFullPathName();
-    }
-
-   #if JUCE_MAC
-    juce::String command = "/bin/bash \"" + launcherScript.getFullPathName() + "\"";
-   #else
-    juce::String command = "cmd.exe /c \"" + launcherScript.getFullPathName() + "\"";
-   #endif
-
-    backendProcess.start(command);
-    triggerAsyncUpdate();
 }
 
 void AriaBridgeAudioProcessor::startStandaloneMidiInputs()
