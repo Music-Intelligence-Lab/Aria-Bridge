@@ -184,9 +184,9 @@ class FeedbackManager:
 
     def record_generation(self, prompt_bytes: bytes, output_bytes: bytes, params: Dict, mode: str) -> Optional[str]:
         with self.lock:
-            if self.draft_pending:
-                logger.warning("Feedback episode already pending commit; skipping new episode.")
-                return None
+            # A previous draft that was never resolved is superseded here rather than
+            # blocking the new take: graded-but-uncommitted -> committed, ungraded -> deleted.
+            self._resolve_pending_locked()
             enriched = dict(params)
             enriched.update(
                 {
@@ -201,6 +201,36 @@ class FeedbackManager:
             self.draft_pending = True
             logger.info(f"[feedback] draft_pending -> True ({episode_id})")
             return episode_id
+
+    def _resolve_pending_locked(self):
+        """Resolve the current draft (caller must hold self.lock).
+
+        An un-graded draft is deleted so it never pollutes the dataset; a grade that was
+        set but not yet committed is finalized so the take isn't lost.
+        """
+        if not (self.draft_pending and self.current_episode_id):
+            return
+        episode_id = self.current_episode_id
+        if self.latest_grade is not None:
+            feedback = {
+                "coherence": self.coherence,
+                "repetition": self.repetition,
+                "taste": self.taste,
+                "continuity": self.continuity,
+            }
+            self.datastore.finalize_episode(episode_id, int(self.latest_grade), feedback=feedback)
+            logger.info(f"[feedback] Auto-committed graded episode {episode_id} before new session.")
+        else:
+            self.datastore.discard_episode(episode_id)
+            logger.info(f"[feedback] Discarded un-graded draft {episode_id}.")
+        self.current_episode_id = None
+        self.draft_pending = False
+        self.latest_grade = None
+
+    def discard_pending(self):
+        """Drop/resolve the current draft when a new recording begins."""
+        with self.lock:
+            self._resolve_pending_locked()
 
     def set_grade(self, grade: int):
         with self.lock:
@@ -509,8 +539,10 @@ def main():
     )
     parser.add_argument(
         "--feedback",
-        action="store_true",
-        help="Enable real-time feedback dataset capture mode",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Capture graded takes into the feedback dataset (default: on for all modes; "
+             "use --no-feedback to disable)",
     )
     parser.add_argument(
         "--data-dir",

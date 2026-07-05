@@ -189,13 +189,15 @@ def get_optim(
     model: nn.Module,
     num_epochs: int,
     steps_per_epoch: int,
+    lr: float = 3e-4,
 ):
-    LR = 3e-4
+    # 3e-4 is the pretraining LR. For fine-tuning pass a much smaller value
+    # (~1e-5 to 5e-5) via --lr so the base model is nudged, not overwritten.
     END_RATIO = 0.1
     WARMUP_STEPS = 200
 
     return _get_optim(
-        lr=LR,
+        lr=lr,
         model=model,
         num_epochs=num_epochs,
         steps_per_epoch=steps_per_epoch,
@@ -506,6 +508,7 @@ def resume_train(
     checkpoint_dir: str,
     resume_epoch: int,
     resume_step: int,
+    lr: float = 3e-4,
     steps_per_checkpoint: int | None = None,
     project_dir: str = None,
 ):
@@ -587,6 +590,7 @@ def resume_train(
         model,
         num_epochs=epochs,
         steps_per_epoch=len(train_dataloader) // grad_acc_steps,
+        lr=lr,
     )
 
     (
@@ -639,6 +643,7 @@ def train(
     batch_size: int,
     grad_acc_steps: int,
     epochs: int,
+    lr: float = 3e-4,
     checkpoint_path: str | None = None,
     steps_per_checkpoint: int | None = None,
     project_dir: str = None,
@@ -732,6 +737,7 @@ def train(
         model,
         num_epochs=epochs,
         steps_per_epoch=len(train_dataloader) // grad_acc_steps,
+        lr=lr,
     )
 
     (
@@ -800,6 +806,12 @@ def parse_resume_args():
     argp = argparse.ArgumentParser(prog="python aria/train.py resume")
     argp.add_argument("model", help="name of model config file")
     argp.add_argument(
+        "--lr",
+        help="learning rate (fine-tune: ~1e-5 to 5e-5; pretrain default 3e-4)",
+        type=float,
+        default=3e-4,
+    )
+    argp.add_argument(
         "--train_data", nargs="+", help="path to train dir", required=True
     )
     argp.add_argument("--val_data", help="path to val dir", required=True)
@@ -831,6 +843,12 @@ def parse_resume_args():
 def parse_train_args():
     argp = argparse.ArgumentParser(prog="python aria/train.py train")
     argp.add_argument("model", help="name of model config file")
+    argp.add_argument(
+        "--lr",
+        help="learning rate (fine-tune: ~1e-5 to 5e-5; pretrain default 3e-4)",
+        type=float,
+        default=3e-4,
+    )
     argp.add_argument(
         "--train_data", nargs="+", help="path to train dir", required=True
     )
@@ -882,6 +900,7 @@ if __name__ == "__main__":
             batch_size=train_args.bs,
             grad_acc_steps=train_args.grad_acc_steps,
             epochs=train_args.epochs,
+            lr=train_args.lr,
             checkpoint_path=train_args.cp_path,
             steps_per_checkpoint=train_args.spc,
             project_dir=train_args.pdir,
@@ -897,6 +916,7 @@ if __name__ == "__main__":
             batch_size=resume_args.bs,
             grad_acc_steps=resume_args.grad_acc_steps,
             epochs=resume_args.epochs,
+            lr=resume_args.lr,
             checkpoint_dir=resume_args.cp_dir,
             resume_step=resume_args.r_step,
             resume_epoch=resume_args.r_epoch,
