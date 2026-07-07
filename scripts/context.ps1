@@ -7,13 +7,14 @@
 #   scripts\context.ps1 save ["msg"]  # mirror sessions, add context files, commit, push
 #   scripts\context.ps1 load          # pull latest, restore sessions
 #   scripts\context.ps1 <git args>    # passthrough (status, log, ...)
-param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CmdArgs)
 
 $Root = (Resolve-Path "$PSScriptRoot\..").Path
 $GD   = Join-Path $Root ".aria-context.git"
 function Ctx { & git --git-dir="$GD" --work-tree="$Root" @args }
 
-$Files = @("CLAUDE.md","STATUS.md","SYNC.md","tasks.md","TRAINING_MODEL.md","ARIA_Model.pdf",
+# Keep this list identical to FILES in context.sh so both machines sync the same set.
+$Files = @("CLAUDE.md","STATUS.md","SYNC.md","tasks.md","TODO.md","MODEL_TRAINING.md","TRAINING_MODEL.md","ARIA_Model.pdf",
   "real-time/docs/TEMPO_AND_TIMING.md","real-time/docs/TOKENS_AND_CLOCK.md",
   "real-time/tools/count_tokens.py","real-time/tools/midi_to_clip.py",
   "scripts/list_midi_ports.py","real-time/tests/Track.mid","graphify-out",".specify",".claude-sessions",
@@ -40,8 +41,8 @@ function Sessions-FromRepo {
   Write-Host "  sessions restored to $d"
 }
 
-$cmd = if ($Args.Count -gt 0) { $Args[0] } else { "" }
-$rest = if ($Args.Count -gt 1) { $Args[1..($Args.Count-1)] } else { @() }
+$cmd = if ($CmdArgs.Count -gt 0) { $CmdArgs[0] } else { "" }
+$rest = if ($CmdArgs.Count -gt 1) { $CmdArgs[1..($CmdArgs.Count-1)] } else { @() }
 switch ($cmd) {
   "clone" {
     & git clone --bare $rest[0] $GD
@@ -62,13 +63,16 @@ switch ($cmd) {
         } else { Ctx add -f $f }
       }
     }
-    $msg = if ($rest.Count -gt 0) { $rest[0] } else { "context update" }
+    $msg = if ($rest.Count -gt 0) { $rest -join ' ' } else { "context update" }
     Ctx commit -m $msg; Ctx push
   }
   "load" {
     Ctx pull --no-rebase
+    # Force the working tree to match HEAD so locally-deleted synced files are recovered
+    # (a plain pull leaves a working-tree deletion in place).
+    Ctx checkout -f main
     Sessions-FromRepo
   }
   "" { Write-Host "usage: context.ps1 {clone <url>|save [msg]|load|<git args>}" }
-  default { Ctx @Args }
+  default { Ctx @CmdArgs }
 }
