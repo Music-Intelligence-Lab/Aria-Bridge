@@ -2,6 +2,7 @@ import csv
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -262,3 +263,34 @@ class DataStore:
                 return row[0]
 
         return None
+
+    def discard_episode(self, episode_id: str) -> bool:
+        """Delete an episode (prompt/output/meta) and its index row.
+
+        Used to drop un-graded drafts so they never enter the training set or block
+        the next recording session.
+        """
+        removed = False
+        for candidate in self.episodes_dir.rglob("meta.json"):
+            try:
+                with candidate.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+            if data.get("episode_id") == episode_id:
+                shutil.rmtree(candidate.parent, ignore_errors=True)
+                removed = True
+                break
+
+        if self.index_path.exists():
+            with self.index_path.open("r", newline="", encoding="utf-8") as f:
+                rows = list(csv.reader(f))
+            kept = [r for r in rows if not (r and r[0] == episode_id)]
+            if len(kept) != len(rows):
+                with tempfile.NamedTemporaryFile("w", delete=False, dir=self.index_path.parent, newline="", encoding="utf-8") as tmp:
+                    writer = csv.writer(tmp)
+                    writer.writerows(kept)
+                    tmp_path = Path(tmp.name)
+                tmp_path.replace(self.index_path)
+
+        return removed

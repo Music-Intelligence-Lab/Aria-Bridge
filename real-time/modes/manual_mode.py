@@ -564,6 +564,10 @@ class ManualModeSession:
 
     def _begin_recording(self):
         """Shared start logic for keyboard + OSC."""
+        # Starting a new take supersedes any un-graded previous draft: delete it so it
+        # never enters the training set and the new session isn't blocked/overwritten.
+        if self.feedback_manager:
+            self.feedback_manager.discard_pending()
         self.recorded.clear()
         self._msg_count = 0
         self._note_on_count = 0
