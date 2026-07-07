@@ -199,6 +199,7 @@ TRACK.mid
 .claude-sessions/
 SYNC.md
 TODO.md
+TRAINING_MODEL.md
 
 # Feedback dataset (graded takes for personalized fine-tuning) — ignored by the main repo,
 # synced via the context repo (scripts/context.ps1)
@@ -210,3 +211,6 @@ graphify-out/
 # spec-kit workspace — ignored by the main repo, synced via the context repo (scripts/context.ps1)
 .specify/
 MODEL_TRAINING.md
+
+data/
+experiments/
