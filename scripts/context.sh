@@ -13,7 +13,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GD="$ROOT/.aria-context.git"
 CTX() { git --git-dir="$GD" --work-tree="$ROOT" "$@"; }
 
-FILES=(CLAUDE.md STATUS.md SYNC.md tasks.md TODO.md TRAINING_MODEL.md ARIA_Model.pdf
+FILES=(CLAUDE.md STATUS.md SYNC.md tasks.md TODO.md TRAINING_MODEL.md TRAINING_MODEL.txt ARIA_Model.pdf
   real-time/docs/TEMPO_AND_TIMING.md real-time/docs/TOKENS_AND_CLOCK.md
   real-time/tools/count_tokens.py real-time/tools/midi_to_clip.py
   scripts/list_midi_ports.py real-time/tests/Track.mid graphify-out .specify .claude-sessions)
