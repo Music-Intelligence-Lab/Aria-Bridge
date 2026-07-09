@@ -200,7 +200,7 @@ TRACK.mid
 SYNC.md
 TODO.md
 TRAINING_MODEL.md
-
+TRAINING_MODEL.txt
 # Feedback dataset (graded takes for personalized fine-tuning) — ignored by the main repo,
 # synced via the context repo (scripts/context.ps1)
 feedback/
