@@ -101,6 +101,47 @@ def infer_bpm_from_onsets(messages: Iterable[TimestampedMidiMsg]) -> Optional[fl
     return max(30.0, min(bpm, 240.0))
 
 
+def retime_midi_to_120bpm(midi_path: str) -> bytes:
+    """Return the MIDI at `midi_path` rewritten at a fixed 120 BPM, preserving wall-clock timing.
+
+    The saved feedback prompt is written at an inferred BPM (`infer_bpm_from_onsets` over-estimates
+    when playing denser than one note per beat), so it half-tempos when a DAW re-grids it onto a
+    120 project grid. Aria reads absolute-ms timing and ignores tempo, so this only normalizes the
+    *stored* prompt's audition to match output.mid's canonical 120 BPM. Ticks are rescaled by
+    old_tempo/new_tempo, so the real (wall-clock) duration is unchanged — only the beat grid moves.
+    """
+    import io
+    import mido
+
+    mid = mido.MidiFile(midi_path)
+    new_tempo = 500_000  # microseconds per beat == 120 BPM
+    old_tempo = next(
+        (m.tempo for tr in mid.tracks for m in tr if m.type == "set_tempo"),
+        new_tempo,
+    )
+    if old_tempo == new_tempo:
+        return Path(midi_path).read_bytes()
+    scale = old_tempo / new_tempo
+
+    out = mido.MidiFile(ticks_per_beat=mid.ticks_per_beat)
+    for tr in mid.tracks:
+        new_tr = mido.MidiTrack()
+        out.tracks.append(new_tr)
+        abs_old = abs_new_prev = 0
+        for msg in tr:
+            abs_old += msg.time
+            abs_new = round(abs_old * scale)
+            new_msg = msg.copy(time=max(0, abs_new - abs_new_prev))
+            abs_new_prev = abs_new
+            if new_msg.type == "set_tempo":
+                new_msg = new_msg.copy(tempo=new_tempo)
+            new_tr.append(new_msg)
+
+    buf = io.BytesIO()
+    out.save(file=buf)
+    return buf.getvalue()
+
+
 def _play_midi_file(midi_path: str, out_port, progress_cb=None, duration_cb=None, stop_event=None) -> Tuple[int, float]:
     import mido
     mid = mido.MidiFile(midi_path)
@@ -181,6 +222,7 @@ class ManualModeSession:
         loop_buffer: int = 4,
         loop_max_slot: int = 7,
         record_clip: bool = False,
+        variants: int = 1,
     ):
         self.in_port_name = in_port_name
         self.out_port_name = out_port_name
@@ -192,6 +234,10 @@ class ManualModeSession:
         self.max_bars = max_bars
         self.beats_per_bar = beats_per_bar
         self.max_new_tokens = max_new_tokens
+        # Variant collection: >1 turns on Option-A "each Play press generates + plays the next
+        # take of the same prompt", each graded/committed as its own episode. 1 = normal flow.
+        self.variants = max(1, int(variants or 1))
+        self._variant_group_id = None
         # Default play key to 'p' so manual playback always available (even if flag omitted).
         self.play_key = play_key or "p"
         self.play_toggle = KeyboardToggle(self.play_key, osc_driven=bool(command_queue))
@@ -907,6 +953,206 @@ class ManualModeSession:
                 self.osc_status_cb("IDLE")
             self._log_ui("Loop stopped — ready to record again.")
 
+    def _generate_once(self, prompt_midi_path, duration, temp, top_p, min_p, tokens, seed=None):
+        """Run one generation with the same cancel/timeout/STATUS handling as before. Returns the
+        generated MIDI path, or None if canceled, timed out, or failed."""
+        self.generation_cancel_event.clear()
+        if self.osc_generation_start_cb:
+            self.osc_generation_start_cb()
+
+        gen_result: List[Optional[str]] = [None]
+        gen_thread_id: List[Optional[int]] = [None]
+
+        def _run_generate():
+            gen_thread_id[0] = threading.current_thread().ident
+            try:
+                gen_result[0] = self.aria_engine.generate(
+                    prompt_midi_path=prompt_midi_path,
+                    prompt_duration_s=max(1, int(duration)),
+                    horizon_s=self.gen_seconds,
+                    temperature=temp,
+                    top_p=top_p,
+                    min_p=min_p,
+                    max_new_tokens=tokens,
+                    progress_cb=self.osc_generation_progress_cb,
+                    seed=seed,
+                )
+            except _GenerationCanceled:
+                logger.info("[manual] Generation interrupted mid-token")
+                print("[manual] Generation interrupted mid-token")
+            except Exception as e:
+                logger.exception(f"[manual] Generation error: {e}")
+
+        MAX_GEN_TIMEOUT_S = 90
+
+        gen_thread = threading.Thread(target=_run_generate, daemon=True)
+        print("STATUS:generating", flush=True)
+        gen_thread.start()
+
+        gen_start_time = time.time()
+        last_status_elapsed = -1.0
+        timed_out = False
+        while gen_thread.is_alive():
+            if self.generation_cancel_event.is_set() and gen_thread_id[0] is not None:
+                logger.info("[manual] Injecting cancel into generation thread")
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                    ctypes.c_ulong(gen_thread_id[0]),
+                    ctypes.py_object(_GenerationCanceled),
+                )
+                gen_thread_id[0] = None
+            elapsed = time.time() - gen_start_time
+            if elapsed > MAX_GEN_TIMEOUT_S:
+                logger.error(f"[manual] Generation timed out after {int(elapsed)}s")
+                print(f"STATUS:error:Generation timed out after {int(elapsed)}s — check GPU/model.", flush=True)
+                if gen_thread_id[0] is not None:
+                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_ulong(gen_thread_id[0]),
+                        ctypes.py_object(_GenerationCanceled),
+                    )
+                    gen_thread_id[0] = None
+                timed_out = True
+                break
+            if elapsed - last_status_elapsed >= 0.5:
+                print(f"STATUS:generating:{elapsed:.1f}", flush=True)
+                last_status_elapsed = elapsed
+            time.sleep(0.05)
+
+        gen_thread.join(timeout=5.0)
+        if not timed_out:
+            print("STATUS:generation_done", flush=True)
+        if self.osc_generation_done_cb:
+            self.osc_generation_done_cb()
+
+        generated_path = gen_result[0]
+        if timed_out or self.generation_cancel_event.is_set():
+            self.generation_cancel_event.clear()
+            if generated_path:
+                try:
+                    os.unlink(generated_path)
+                except Exception:
+                    pass
+            return None
+        return generated_path
+
+    def _wait_for_play_signal(self) -> bool:
+        """Block until a Play signal (keyboard play key or OSC /aria/play). Returns True on Play,
+        False if canceled/skipped. Unlike _wait_for_play it plays nothing — the caller generates
+        and plays the next variant."""
+        play_event = threading.Event()
+
+        def _wait_keyboard_play():
+            if self.play_toggle.wait_for_press(
+                f"Press '{self.play_key}' for the next variant (Cancel to stop).", self.cancel_event
+            ):
+                play_event.set()
+
+        threading.Thread(target=_wait_keyboard_play, daemon=True).start()
+        while not self.cancel_event.is_set() and not self.skip_pending_event.is_set():
+            self._drain_commands(play_event=play_event)
+            if play_event.is_set():
+                return True
+            time.sleep(0.05)
+        if self.skip_pending_event.is_set():
+            self.skip_pending_event.clear()
+        return False
+
+    def _play_variant(self, path):
+        """Stream a generated variant out ARIA_OUT (grade by ear), then delete its temp file."""
+        if not self.out_port:
+            logger.warning("[variant] No output port; cannot play variant.")
+            self._log_ui("No output port to play variant")
+            return
+        self.playback_cancel_event.clear()
+        sent, total = _play_midi_file(
+            path, self.out_port,
+            progress_cb=self.osc_playback_progress_cb,
+            duration_cb=self.osc_playback_duration_cb,
+            stop_event=self.playback_cancel_event,
+        )
+        if self.osc_playback_stopped_cb:
+            self.osc_playback_stopped_cb()
+        logger.info(f"[variant] Played ({sent} msgs, {total:.2f}s)")
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+
+    def _run_variant_loop(self, prompt_midi_path, duration, temp, top_p, min_p, tokens):
+        """Option-A collection: each Play press generates + plays the next variant of this prompt,
+        each saved as its own graded episode (linked by group_id). Runs up to self.variants takes,
+        or until Cancel. Grade + commit each between Play presses; commit targets the active variant."""
+        import uuid
+        import random
+
+        group_id = uuid.uuid4().hex[:12]
+        self._variant_group_id = group_id
+        try:
+            prompt_bytes = retime_midi_to_120bpm(prompt_midi_path)
+        except Exception:
+            prompt_bytes = Path(prompt_midi_path).read_bytes()
+
+        self._log_ui(
+            f"Variant mode: press '{self.play_key}' for each take (up to {self.variants}); "
+            "grade + commit between takes."
+        )
+        idx = 0
+        try:
+            while idx < self.variants and not self.cancel_event.is_set():
+                if self.session_state:
+                    self.session_state.set_status("READY")
+                if self.osc_status_cb:
+                    self.osc_status_cb("READY")
+                print("STATUS:awaiting_play", flush=True)
+
+                if not self._wait_for_play_signal():
+                    break  # canceled
+
+                seed = random.randint(1, 2**31 - 1)
+                generated = self._generate_once(
+                    prompt_midi_path, duration, temp, top_p, min_p, tokens, seed=seed
+                )
+                if generated is None:
+                    break  # canceled/failed mid-generation
+
+                if self.feedback_manager:
+                    try:
+                        output_bytes = Path(generated).read_bytes()
+                        params = {
+                            "temperature": temp, "top_p": top_p, "min_p": min_p,
+                            "max_tokens": tokens, "seed": seed,
+                            "group_id": group_id, "variant": idx,
+                        }
+                        ep_id = self.feedback_manager.create_variant_episode(
+                            prompt_bytes, output_bytes, params, mode="manual"
+                        )
+                        if ep_id:
+                            self.feedback_manager.set_active_episode(ep_id)
+                    except Exception as e:
+                        logger.warning(f"[variant] capture failed: {e}")
+
+                if self.session_state:
+                    self.session_state.set_status("PLAYING")
+                if self.osc_status_cb:
+                    self.osc_status_cb("PLAYING")
+                self._play_variant(generated)
+                idx += 1
+                self._log_ui(
+                    f"Variant {idx}/{self.variants} played — grade + commit, then Play for the next."
+                )
+            if idx >= self.variants:
+                self._log_ui(f"All {self.variants} variants done — record a new prompt to continue.")
+        finally:
+            self._variant_group_id = None
+            try:
+                os.unlink(prompt_midi_path)
+            except Exception:
+                pass
+            if self.session_state:
+                self.session_state.set_status("IDLE")
+                self.session_state.has_pending_output = False
+            if self.osc_status_cb:
+                self.osc_status_cb("IDLE")
+
     def _finish_recording_and_generate(self):
         """Stop, generate, and arm playback (prompting for 'p')."""
         self.recording_flag.clear()
@@ -986,90 +1232,21 @@ class ManualModeSession:
         if tokens is not None:
             logger.info(f"[GEN] max_new_tokens={tokens}")
             self._log_ui(f"Max tokens -> {tokens}")
-        self.generation_cancel_event.clear()
-        if self.osc_generation_start_cb:
-            self.osc_generation_start_cb()
+        # Variant collection (Option A): each Play press makes the next take of this prompt,
+        # each its own graded episode. Default variants=1 keeps the single-take flow below.
+        if self.variants != 1:
+            self._run_variant_loop(prompt_midi_path, duration, temp, top_p, min_p, tokens)
+            return
 
-        gen_result: List[Optional[str]] = [None]
-        gen_thread_id: List[Optional[int]] = [None]
-
-        def _run_generate():
-            gen_thread_id[0] = threading.current_thread().ident
-            try:
-                gen_result[0] = self.aria_engine.generate(
-                    prompt_midi_path=prompt_midi_path,
-                    prompt_duration_s=max(1, int(duration)),
-                    horizon_s=self.gen_seconds,
-                    temperature=temp,
-                    top_p=top_p,
-                    min_p=min_p,
-                    max_new_tokens=tokens,
-                    progress_cb=self.osc_generation_progress_cb,
-                )
-            except _GenerationCanceled:
-                logger.info("[manual] Generation interrupted mid-token")
-                print("[manual] Generation interrupted mid-token")
-            except Exception as e:
-                logger.exception(f"[manual] Generation error: {e}")
-
-        MAX_GEN_TIMEOUT_S = 90
-
-        gen_thread = threading.Thread(target=_run_generate, daemon=True)
-        print("STATUS:generating", flush=True)
-        gen_thread.start()
-
-        gen_start_time = time.time()
-        last_status_elapsed = -1.0
-        timed_out = False
-        while gen_thread.is_alive():
-            if self.generation_cancel_event.is_set() and gen_thread_id[0] is not None:
-                logger.info("[manual] Injecting cancel into generation thread")
-                ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                    ctypes.c_ulong(gen_thread_id[0]),
-                    ctypes.py_object(_GenerationCanceled),
-                )
-                gen_thread_id[0] = None
-            elapsed = time.time() - gen_start_time
-            if elapsed > MAX_GEN_TIMEOUT_S:
-                logger.error(f"[manual] Generation timed out after {int(elapsed)}s")
-                print(f"STATUS:error:Generation timed out after {int(elapsed)}s — check GPU/model.", flush=True)
-                if gen_thread_id[0] is not None:
-                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                        ctypes.c_ulong(gen_thread_id[0]),
-                        ctypes.py_object(_GenerationCanceled),
-                    )
-                    gen_thread_id[0] = None
-                timed_out = True
-                break
-            if elapsed - last_status_elapsed >= 0.5:
-                print(f"STATUS:generating:{elapsed:.1f}", flush=True)
-                last_status_elapsed = elapsed
-            time.sleep(0.05)
-
-        gen_thread.join(timeout=5.0)
-        if not timed_out:
-            print("STATUS:generation_done", flush=True)
-
-        if self.osc_generation_done_cb:
-            self.osc_generation_done_cb()
-
-        generated_path = gen_result[0]
-
-        if self.generation_cancel_event.is_set():
-            logger.info("[manual] Generation canceled — discarding output")
-            print("[manual] Generation canceled — discarding output")
-            self.generation_cancel_event.clear()
-            if generated_path:
-                try:
-                    os.unlink(generated_path)
-                except Exception:
-                    pass
+        generated_path = self._generate_once(prompt_midi_path, duration, temp, top_p, min_p, tokens)
+        if generated_path is None:
+            # canceled, timed out, or failed — return to record-ready
             if self.session_state:
                 self.session_state.set_status("IDLE")
                 self.session_state.has_pending_output = False
             if self.osc_status_cb:
                 self.osc_status_cb("IDLE")
-            self._log_ui("Generation canceled — ready to record")
+            self._log_ui("Ready to record")
             return
         gen_time = time.time() - gen_start
         logger.info(f"[manual] Generation finished in {gen_time:.2f}s")
@@ -1077,15 +1254,6 @@ class ManualModeSession:
             self.session_state.set_status("PLAYING")
         if self.osc_status_cb:
             self.osc_status_cb("PLAYING")
-
-        if not generated_path:
-            logger.warning("[manual] Generation returned None; aborting playback.")
-            self._log_ui("Generation returned None")
-            if self.session_state:
-                self.session_state.set_status("IDLE")
-            if self.osc_status_cb:
-                self.osc_status_cb("IDLE")
-            return
 
         self._capture_feedback(prompt_midi_path, generated_path, temp, top_p, min_p, tokens)
 
@@ -1166,11 +1334,17 @@ class ManualModeSession:
         if not self.feedback_manager or not output_path:
             return
         try:
-            prompt_bytes = Path(prompt_path).read_bytes()
             output_bytes = Path(output_path).read_bytes()
         except Exception as e:
             logger.warning(f"[feedback] Failed to read MIDI files: {e}")
             return
+        # Store the prompt at a fixed 120 BPM (matches output.mid) so it doesn't half-tempo
+        # when auditioned in a DAW. Falls back to raw bytes if retiming fails.
+        try:
+            prompt_bytes = retime_midi_to_120bpm(prompt_path)
+        except Exception as e:
+            logger.warning(f"[feedback] Prompt retime to 120 BPM failed, storing as-is: {e}")
+            prompt_bytes = Path(prompt_path).read_bytes()
         params = {
             "temperature": temp,
             "top_p": top_p,

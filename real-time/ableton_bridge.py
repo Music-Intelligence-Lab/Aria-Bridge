@@ -232,6 +232,42 @@ class FeedbackManager:
         with self.lock:
             self._resolve_pending_locked()
 
+    def create_variant_episode(self, prompt_bytes: bytes, output_bytes: bytes, params: Dict, mode: str) -> Optional[str]:
+        """Create one draft episode of a 5-per-prompt variant group WITHOUT touching the active
+        pointer, so siblings don't supersede each other. Grading targets a variant only once it is
+        made active via set_active_episode(). Returns the new episode_id."""
+        with self.lock:
+            enriched = dict(params)
+            enriched.update(
+                {
+                    "coherence": self.coherence,
+                    "repetition": self.repetition,
+                    "taste": self.taste,
+                    "continuity": self.continuity,
+                }
+            )
+            return self.datastore.create_episode(prompt_bytes, output_bytes, enriched, mode=mode)
+
+    def set_active_episode(self, episode_id: str):
+        """Point grade/commit at the variant currently being auditioned; reset the pending grade
+        so each variant in the group is graded fresh. Resolves any previous pending variant first
+        (graded -> auto-commit, ungraded -> discard) so skipped variants don't linger as drafts."""
+        with self.lock:
+            self._resolve_pending_locked()
+            self.current_episode_id = episode_id
+            self.draft_pending = True
+            self.latest_grade = None
+            logger.info(f"[feedback] active variant -> {episode_id}")
+
+    def discard_episode_id(self, episode_id: str):
+        """Delete a specific draft episode (an un-graded leftover variant)."""
+        with self.lock:
+            self.datastore.discard_episode(episode_id)
+            if self.current_episode_id == episode_id:
+                self.current_episode_id = None
+                self.draft_pending = False
+                self.latest_grade = None
+
     def set_grade(self, grade: int):
         with self.lock:
             self.latest_grade = int(grade)
@@ -253,6 +289,12 @@ class FeedbackManager:
 
     def commit(self):
         with self.lock:
+            # Guard: only commit when a take is actively pending. This makes a stray double-tap a
+            # no-op instead of finalizing a stale draft with grade 0 (the old recovery path).
+            if not (self.draft_pending and self.current_episode_id):
+                logger.info("Nothing to commit (no active take).")
+                return
+
             grade = self.latest_grade if self.latest_grade is not None else 0
             feedback = {
                 "coherence": self.coherence,
@@ -260,18 +302,7 @@ class FeedbackManager:
                 "taste": self.taste,
                 "continuity": self.continuity,
             }
-
-            episode_id = self.current_episode_id if (self.draft_pending and self.current_episode_id) else None
-
-            if episode_id is None:
-                logger.warning("Commit requested without draft_pending; checking for recent uncommitted episode.")
-                episode_id = self.datastore.find_most_recent_draft_episode()
-
-                if episode_id is None:
-                    logger.warning("No pending feedback episode to commit.")
-                    return
-
-                logger.warning(f"Recovered recent uncommitted feedback episode: {episode_id}")
+            episode_id = self.current_episode_id
 
             self.datastore.finalize_episode(episode_id, grade, feedback=feedback)
             logger.info(f"Feedback episode {episode_id} finalized with grade={grade}.")
@@ -550,6 +581,14 @@ def main():
         default=None,
         help="Directory for storing feedback dataset (default: <base>/feedback/)",
     )
+    parser.add_argument(
+        "--variants",
+        type=int,
+        default=1,
+        help="Outputs to generate per prompt for grading (default: 1). With >1 (e.g. 5), each Play "
+             "press generates + plays the next variant of the same prompt; grade/commit each as its "
+             "own take, then Play again for the next. Manual mode only.",
+    )
 
     # Apply preset defaults before full parse so explicit flags can still override.
     preset_name = next((a for a in sys.argv[1:] if a in PRESETS), None)
@@ -708,6 +747,7 @@ def main():
                 beats_per_bar=args.beats_per_bar,
                 max_new_tokens=args.max_new_tokens,
                 play_key=args.play_key,
+                variants=args.variants,
                 sampling_state=sampling_state,
                 command_queue=cmd_queue if (args.ui or args.m4l) else None,
                 log_queue=log_queue if (args.ui or args.m4l) else None,

@@ -283,6 +283,7 @@ class AriaEngine:
         min_p: Optional[float] = None,
         max_new_tokens: Optional[int] = None,
         progress_cb=None,
+        seed: Optional[int] = None,
     ) -> str:
         """
         Generate continuation from a prompt MIDI file.
@@ -302,6 +303,18 @@ class AriaEngine:
         try:
             from aria.inference import get_inference_prompt
             from ariautils.midi import MidiDict
+
+            # Seed the RNG so a 5-per-prompt variant is reproducible and its seed can be recorded.
+            # With no seed, sequential calls still differ (RNG advances) — this only pins it.
+            if seed is not None:
+                torch.manual_seed(seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed)
+                try:
+                    import mlx.core as _mx
+                    _mx.random.seed(seed)
+                except Exception:
+                    pass
 
             # Get and tokenize prompt
             midi_dict = MidiDict.from_midi(prompt_midi_path)

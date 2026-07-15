@@ -192,6 +192,10 @@ class DataStore:
             "min_p": params.get("min_p"),
             "max_tokens": params.get("max_tokens"),
             "seed": params.get("seed"),
+            # Variant grouping: 5-per-prompt collection links siblings by group_id (the shared
+            # prompt) with variant index 0..N-1. Null for ordinary single-take captures.
+            "group_id": params.get("group_id"),
+            "variant": params.get("variant"),
             "hashes": {
                 "prompt_mid_sha256": prompt_hash,
                 "output_mid_sha256": output_hash,
