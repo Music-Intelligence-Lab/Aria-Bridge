@@ -177,6 +177,11 @@ class FeedbackManager:
         self.current_episode_id: Optional[str] = None
         self.draft_pending: bool = False
         self.latest_grade: Optional[int] = None
+        # The grade knob's last-known position. Unlike latest_grade (reset per take so a
+        # skipped take discards), this persists — the knob only emits OSC on MOVE, so when
+        # you keep the same grade for the next take you never re-send it. commit() falls back
+        # to this so "knob shows 5, commit 5" holds instead of silently committing 0.
+        self.last_grade_value: Optional[int] = None
         self.coherence: Optional[float] = None
         self.repetition: Optional[float] = None
         self.taste: Optional[float] = None
@@ -271,6 +276,7 @@ class FeedbackManager:
     def set_grade(self, grade: int):
         with self.lock:
             self.latest_grade = int(grade)
+            self.last_grade_value = int(grade)  # remember the knob position for the next take
 
     def set_feedback_param(self, name: str, value: float):
         with self.lock:
@@ -295,7 +301,14 @@ class FeedbackManager:
                 logger.info("Nothing to commit (no active take).")
                 return
 
-            grade = self.latest_grade if self.latest_grade is not None else 0
+            # Prefer an explicit grade for this take; else fall back to the knob's last
+            # position (you kept the same grade and never re-moved it); else 0.
+            if self.latest_grade is not None:
+                grade = self.latest_grade
+            elif self.last_grade_value is not None:
+                grade = self.last_grade_value
+            else:
+                grade = 0
             feedback = {
                 "coherence": self.coherence,
                 "repetition": self.repetition,

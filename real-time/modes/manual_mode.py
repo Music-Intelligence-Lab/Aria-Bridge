@@ -953,11 +953,16 @@ class ManualModeSession:
                 self.osc_status_cb("IDLE")
             self._log_ui("Loop stopped — ready to record again.")
 
-    def _generate_once(self, prompt_midi_path, duration, temp, top_p, min_p, tokens, seed=None):
+    def _generate_once(self, prompt_midi_path, duration, temp, top_p, min_p, tokens, seed=None,
+                       silent=False):
         """Run one generation with the same cancel/timeout/STATUS handling as before. Returns the
-        generated MIDI path, or None if canceled, timed out, or failed."""
+        generated MIDI path, or None if canceled, timed out, or failed.
+
+        silent=True suppresses the generation LED/progress OSC + STATUS output. Used for the variant
+        prefetch that runs DURING playback, so background generation doesn't light the 'generating'
+        LED or move the shared slider while a take is playing (playback owns the UI)."""
         self.generation_cancel_event.clear()
-        if self.osc_generation_start_cb:
+        if self.osc_generation_start_cb and not silent:
             self.osc_generation_start_cb()
 
         gen_result: List[Optional[str]] = [None]
@@ -974,7 +979,7 @@ class ManualModeSession:
                     top_p=top_p,
                     min_p=min_p,
                     max_new_tokens=tokens,
-                    progress_cb=self.osc_generation_progress_cb,
+                    progress_cb=(None if silent else self.osc_generation_progress_cb),
                     seed=seed,
                 )
             except _GenerationCanceled:
@@ -986,7 +991,8 @@ class ManualModeSession:
         MAX_GEN_TIMEOUT_S = 90
 
         gen_thread = threading.Thread(target=_run_generate, daemon=True)
-        print("STATUS:generating", flush=True)
+        if not silent:
+            print("STATUS:generating", flush=True)
         gen_thread.start()
 
         gen_start_time = time.time()
@@ -1012,15 +1018,15 @@ class ManualModeSession:
                     gen_thread_id[0] = None
                 timed_out = True
                 break
-            if elapsed - last_status_elapsed >= 0.5:
+            if not silent and elapsed - last_status_elapsed >= 0.5:
                 print(f"STATUS:generating:{elapsed:.1f}", flush=True)
                 last_status_elapsed = elapsed
             time.sleep(0.05)
 
         gen_thread.join(timeout=5.0)
-        if not timed_out:
+        if not timed_out and not silent:
             print("STATUS:generation_done", flush=True)
-        if self.osc_generation_done_cb:
+        if self.osc_generation_done_cb and not silent:
             self.osc_generation_done_cb()
 
         generated_path = gen_result[0]
@@ -1078,9 +1084,14 @@ class ManualModeSession:
             pass
 
     def _run_variant_loop(self, prompt_midi_path, duration, temp, top_p, min_p, tokens):
-        """Option-A collection: each Play press generates + plays the next variant of this prompt,
-        each saved as its own graded episode (linked by group_id). Runs up to self.variants takes,
-        or until Cancel. Grade + commit each between Play presses; commit targets the active variant."""
+        """Option-A collection: each Play press plays the next variant of this prompt, each saved as
+        its own graded episode (linked by group_id). Runs up to self.variants takes, or until Cancel.
+        Grade + commit each between Play presses; commit targets the active variant.
+
+        Prefetch (always-on): the NEXT take is generated in a background thread while the current one
+        plays, so a Play press usually plays instantly. Its sampling params are snapshotted when the
+        prefetch kicks off (as the current take starts playing) — so a knob change between takes lands
+        on the take-after-next, not the immediate next. The first take is generated live on Play."""
         import uuid
         import random
 
@@ -1093,8 +1104,42 @@ class ManualModeSession:
 
         self._log_ui(
             f"Variant mode: press '{self.play_key}' for each take (up to {self.variants}); "
-            "grade + commit between takes."
+            "grade + commit between takes. Next take generates while the current one plays."
         )
+
+        def _snapshot_params():
+            """Read the live sampling knobs (temp/top_p/min_p/tokens) right now."""
+            if self.sampling_state:
+                t, tp, mp = self.sampling_state.get_values()
+                return t, tp, mp, self._resolve_max_tokens()
+            return temp, top_p, min_p, tokens
+
+        # Background prefetch of the next take. "thread" None => nothing in flight; when it finishes
+        # "result"[0] holds the generated path (or None on cancel/fail) and "params" its sampling meta.
+        prefetch = {"thread": None, "result": [None], "params": None}
+
+        def _start_prefetch():
+            t, tp, mp, tok = _snapshot_params()   # temp snapshot at kickoff ("always prefetch")
+            seed = random.randint(1, 2**31 - 1)
+            prefetch["params"] = {"temperature": t, "top_p": tp, "min_p": mp,
+                                  "max_tokens": tok, "seed": seed}
+            prefetch["result"] = [None]
+            logger.info(
+                f"[variant] prefetch next: temp={t:.2f} top_p={tp:.2f} "
+                f"min_p={mp if mp is not None else 0.0:.2f} seed={seed}"
+            )
+
+            def _work():
+                # silent=True: the background prefetch must not light the generation LED or move
+                # the shared slider — the currently-playing take owns the UI.
+                prefetch["result"][0] = self._generate_once(
+                    prompt_midi_path, duration, t, tp, mp, tok, seed=seed, silent=True
+                )
+
+            th = threading.Thread(target=_work, daemon=True)
+            prefetch["thread"] = th
+            th.start()
+
         idx = 0
         try:
             while idx < self.variants and not self.cancel_event.is_set():
@@ -1107,41 +1152,72 @@ class ManualModeSession:
                 if not self._wait_for_play_signal():
                     break  # canceled
 
-                seed = random.randint(1, 2**31 - 1)
-                generated = self._generate_once(
-                    prompt_midi_path, duration, temp, top_p, min_p, tokens, seed=seed
-                )
+                # Take this variant: the prefetched one if we started it during the previous
+                # playback, else generate now (first take honors the live knob on Play).
+                if prefetch["thread"] is not None:
+                    prefetch["thread"].join()
+                    generated = prefetch["result"][0]
+                    params = prefetch["params"]
+                    prefetch["thread"] = None
+                else:
+                    t, tp, mp, tok = _snapshot_params()
+                    seed = random.randint(1, 2**31 - 1)
+                    params = {"temperature": t, "top_p": tp, "min_p": mp,
+                              "max_tokens": tok, "seed": seed}
+                    logger.info(
+                        f"[variant] take {idx + 1}/{self.variants} (live): temp={t:.2f} "
+                        f"top_p={tp:.2f} min_p={mp if mp is not None else 0.0:.2f}"
+                    )
+                    generated = self._generate_once(
+                        prompt_midi_path, duration, t, tp, mp, tok, seed=seed
+                    )
+
                 if generated is None:
                     break  # canceled/failed mid-generation
 
                 if self.feedback_manager:
                     try:
                         output_bytes = Path(generated).read_bytes()
-                        params = {
-                            "temperature": temp, "top_p": top_p, "min_p": min_p,
-                            "max_tokens": tokens, "seed": seed,
-                            "group_id": group_id, "variant": idx,
-                        }
+                        ep_params = dict(params)
+                        ep_params.update({"group_id": group_id, "variant": idx})
                         ep_id = self.feedback_manager.create_variant_episode(
-                            prompt_bytes, output_bytes, params, mode="manual"
+                            prompt_bytes, output_bytes, ep_params, mode="manual"
                         )
                         if ep_id:
                             self.feedback_manager.set_active_episode(ep_id)
                     except Exception as e:
                         logger.warning(f"[variant] capture failed: {e}")
 
+                idx += 1
+
+                # Kick off the NEXT take before playing this one, so it generates while the
+                # audio streams (nothing left to prefetch after the final take).
+                if idx < self.variants and not self.cancel_event.is_set():
+                    _start_prefetch()
+
                 if self.session_state:
                     self.session_state.set_status("PLAYING")
                 if self.osc_status_cb:
                     self.osc_status_cb("PLAYING")
                 self._play_variant(generated)
-                idx += 1
                 self._log_ui(
                     f"Variant {idx}/{self.variants} played — grade + commit, then Play for the next."
                 )
             if idx >= self.variants:
                 self._log_ui(f"All {self.variants} variants done — record a new prompt to continue.")
         finally:
+            # Drain any in-flight prefetch and delete its temp file so a canceled series leaves
+            # nothing behind (its episode was never created — it only becomes active on Play).
+            if prefetch["thread"] is not None:
+                self.generation_cancel_event.set()   # stop a running prefetch fast
+                prefetch["thread"].join(timeout=5.0)
+                leftover = prefetch["result"][0]
+                if leftover:
+                    try:
+                        os.unlink(leftover)
+                    except Exception:
+                        pass
+                self.generation_cancel_event.clear()
             self._variant_group_id = None
             try:
                 os.unlink(prompt_midi_path)
