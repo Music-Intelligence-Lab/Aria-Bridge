@@ -296,10 +296,9 @@ class OscController:
             logger.debug("Failed to send /generation_done")
 
     def send_generation_progress(self, value: float):
-        # Generation drives the shared slider only when nothing is playing and clip output is off
-        # (playback has priority; the slider is disabled in clip mode).
-        if self.clip_enabled or self.playback_active:
-            return
+        # Generation always drives the shared slider — in every mode, clip output included.
+        # (The silent variant-prefetch passes no progress callback, so background generation
+        # still won't move the slider while a take is playing.)
         self._send_slider(value)
 
     def send_playback_progress(self, value: float):
