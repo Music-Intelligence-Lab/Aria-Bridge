@@ -223,6 +223,7 @@ class ManualModeSession:
         loop_max_slot: int = 7,
         record_clip: bool = False,
         variants: int = 1,
+        capture_dir: Optional[str] = None,
     ):
         self.in_port_name = in_port_name
         self.out_port_name = out_port_name
@@ -238,6 +239,9 @@ class ManualModeSession:
         # take of the same prompt", each graded/committed as its own episode. 1 = normal flow.
         self.variants = max(1, int(variants or 1))
         self._variant_group_id = None
+        # Capture mode: when set, Record->stop writes the raw take to this folder as a .mid and
+        # skips generation entirely (no model). Used to build a training corpus of your own playing.
+        self.capture_dir = capture_dir
         # Default play key to 'p' so manual playback always available (even if flag omitted).
         self.play_key = play_key or "p"
         self.play_toggle = KeyboardToggle(self.play_key, osc_driven=bool(command_queue))
@@ -1229,6 +1233,42 @@ class ManualModeSession:
             if self.osc_status_cb:
                 self.osc_status_cb("IDLE")
 
+    def _save_capture(self, duration: float) -> None:
+        """Capture mode: write the recorded performance to capture_dir as a .mid — no model.
+
+        Reuses the same buffer->MIDI conversion as the prompt path, then normalizes to 120 BPM so
+        the file auditions correctly in a DAW (Aria reads absolute time and ignores tempo, so this
+        does not change what a future fine-tune learns). Files are timestamped so takes never clobber.
+        """
+        import shutil
+        bpm = infer_bpm_from_onsets(self.recorded)
+        tmp_path = buffer_to_tempfile_midi(
+            messages=self.recorded,
+            window_seconds=duration,
+            current_bpm=bpm,
+            ticks_per_beat=self.ticks_per_beat,
+        )
+        out_dir = Path(self.capture_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        out_path = out_dir / f"{stamp}.mid"
+        n = 1
+        while out_path.exists():   # two takes in the same second
+            out_path = out_dir / f"{stamp}_{n}.mid"
+            n += 1
+        try:
+            out_path.write_bytes(retime_midi_to_120bpm(tmp_path))
+        except Exception:
+            shutil.copy2(tmp_path, out_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        logger.info(f"[capture] Saved {out_path} (events={self._msg_count}, note_on={self._note_on_count})")
+        self._log_ui(f"Saved take -> {out_path.name} (events={self._msg_count}, note_on={self._note_on_count})")
+        print(f"STATUS:captured:{out_path.name}", flush=True)
+
     def _finish_recording_and_generate(self):
         """Stop, generate, and arm playback (prompting for 'p')."""
         self.recording_flag.clear()
@@ -1237,6 +1277,22 @@ class ManualModeSession:
         duration = (self.stop_time - self.start_time) if self.start_time else 0.0
         logger.info(f"[manual] Recording stopped at {self.stop_time:.3f} (duration={duration:.2f}s)")
         self._log_ui(f"Recording stopped (events={self._msg_count}, note_on={self._note_on_count})")
+
+        # Capture mode: save the raw performance to disk and stop — no generation, no model.
+        if self.capture_dir:
+            if self.session_state:
+                self.session_state.set_recording(False)
+            if not self.recorded:
+                self._log_ui("No MIDI captured — nothing saved. Check ARIA_IN routing/monitor.")
+            else:
+                self._save_capture(duration)
+            if self.session_state:
+                self.session_state.set_status("IDLE")
+                self.session_state.has_pending_output = False
+            if self.osc_status_cb:
+                self.osc_status_cb("IDLE")
+            return
+
         if self.session_state:
             self.session_state.set_status("GENERATING")
             self.session_state.set_recording(False)

@@ -7,6 +7,7 @@ Usage (preset):
     python ableton_bridge.py m4l       --checkpoint <path>  # Max for Live device
     python ableton_bridge.py automatic --checkpoint <path>  # Clock-sync auto-generation
     python ableton_bridge.py manual    --checkpoint <path>  # Keyboard-driven, no OSC
+    python ableton_bridge.py capture   --data-dir data/myplaying  # Record raw playing, no model
 
 Usage (explicit flags, still supported):
     python ableton_bridge.py --mode manual --m4l --in ARIA_IN --out ARIA_OUT --checkpoint <path>
@@ -40,6 +41,9 @@ PRESETS: dict = {
     "automatic": {"mode": "clock"},
     # Keyboard-only: no OSC, start/stop via keyboard keys.
     "manual": {"mode": "manual"},
+    # Capture: record raw playing to disk for training data — no model, no generation.
+    # Same OSC record button as m4l/plugin; each take is saved as a .mid into --data-dir.
+    "capture": {"mode": "manual", "m4l": True, "feedback": False, "capture": True},
 }
 
 def _auto_detect_device() -> str:
@@ -602,6 +606,13 @@ def main():
              "press generates + plays the next variant of the same prompt; grade/commit each as its "
              "own take, then Play again for the next. Manual mode only.",
     )
+    parser.add_argument(
+        "--capture",
+        action="store_true",
+        help="Capture mode: record raw playing from ARIA_IN and save each take as a .mid into "
+             "--data-dir (default data/myplaying). No model is loaded and nothing is generated — "
+             "for building a training corpus of your own playing. Use the 'capture' preset.",
+    )
 
     # Apply preset defaults before full parse so explicit flags can still override.
     preset_name = next((a for a in sys.argv[1:] if a in PRESETS), None)
@@ -633,6 +644,20 @@ def main():
         feedback_manager = FeedbackManager(datastore)
     else:
         feedback_manager = None
+
+    # Capture mode: --data-dir is the raw-playing output folder (no feedback datastore).
+    capture_dir = None
+    if args.capture:
+        if args.data_dir is not None:
+            capture_dir = Path(args.data_dir)
+        else:
+            if getattr(sys, "frozen", False):
+                _base = Path(sys.executable).parent
+            else:
+                _base = Path(__file__).parent.parent
+            capture_dir = _base / "data" / "myplaying"
+        capture_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[Capture] Saving raw playing to: {capture_dir}")
 
     # Import and start bridge
     try:
@@ -697,28 +722,31 @@ def main():
                 slt = _synced_or(startup_state, 'slot', args.slot)
                 print(f"STATUS:synced:temp={t:.2f} top_p={tp:.2f} tokens={tok} track={trk} slot={slt}", flush=True)
 
-        # Resolve device (auto-detect if not specified)
-        if args.device is None:
-            args.device = _auto_detect_device()
-            logger.info(f"Auto-detected device: {args.device}")
+        # Capture mode records raw playing only — no device/checkpoint/model needed.
+        checkpoint_path = None
+        if not args.capture:
+            # Resolve device (auto-detect if not specified)
+            if args.device is None:
+                args.device = _auto_detect_device()
+                logger.info(f"Auto-detected device: {args.device}")
 
-        if args.device == "cuda":
-            import torch
-            if not torch.cuda.is_available():
-                logger.error("CUDA requested but not available. Use --device mlx (Apple Silicon) or --device cpu")
-                return 1
-            logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
-        elif args.device == "mlx":
-            try:
-                import mlx.core  # noqa: F401
-            except ImportError:
-                logger.error("MLX requested but not installed. Run: pip install mlx")
-                return 1
-            logger.info("MLX backend (Apple Silicon)")
-        else:
-            logger.info("CPU device (inference will be slow)")
+            if args.device == "cuda":
+                import torch
+                if not torch.cuda.is_available():
+                    logger.error("CUDA requested but not available. Use --device mlx (Apple Silicon) or --device cpu")
+                    return 1
+                logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
+            elif args.device == "mlx":
+                try:
+                    import mlx.core  # noqa: F401
+                except ImportError:
+                    logger.error("MLX requested but not installed. Run: pip install mlx")
+                    return 1
+                logger.info("MLX backend (Apple Silicon)")
+            else:
+                logger.info("CPU device (inference will be slow)")
 
-        checkpoint_path = find_checkpoint(args.checkpoint)
+            checkpoint_path = find_checkpoint(args.checkpoint)
 
         # Keyboard hotkeys (after OSC sync so defaults reflect Max state)
         start_sampling_hotkeys(sampling_state, hotkey_stop)
@@ -735,12 +763,16 @@ def main():
             if args.clock_in:
                 logger.info(f"MIDI Clock input: {args.clock_in}")
 
-        # Create shared engine
-        engine = AriaEngine(
-            checkpoint_path=checkpoint_path,
-            device=args.device,
-            config_name="medium",
-        )
+        # Create shared engine (skipped in capture mode — no generation).
+        if args.capture:
+            engine = None
+            logger.info("Capture mode: model NOT loaded; recording raw playing to disk only.")
+        else:
+            engine = AriaEngine(
+                checkpoint_path=checkpoint_path,
+                device=args.device,
+                config_name="medium",
+            )
         print("STATUS:ready", flush=True)
 
         if osc:
@@ -791,6 +823,7 @@ def main():
                 loop_buffer=args.loop_buffer,
                 loop_max_slot=args.loop_max_slot,
                 record_clip=args.record_clip,
+                capture_dir=str(capture_dir) if capture_dir else None,
             )
             if osc:
                 osc.cancel_playback_cb = session.playback_cancel_event.set
