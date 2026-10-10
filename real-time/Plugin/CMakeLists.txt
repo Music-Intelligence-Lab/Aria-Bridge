@@ -98,3 +98,17 @@ target_link_libraries(AriaBridge
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+option(ARIA_BUILD_TESTS "Build the plugin control regression tests and UI previews" OFF)
+if (ARIA_BUILD_TESTS AND WIN32)
+    enable_testing()
+    add_executable(AriaBridgeControlTests Tests/ControlTests.cpp)
+    target_include_directories(AriaBridgeControlTests PRIVATE
+        $<TARGET_PROPERTY:AriaBridge,INCLUDE_DIRECTORIES>
+    )
+    target_compile_definitions(AriaBridgeControlTests PRIVATE
+        $<TARGET_PROPERTY:AriaBridge,COMPILE_DEFINITIONS>
+    )
+    target_link_libraries(AriaBridgeControlTests PRIVATE AriaBridge)
+    add_test(NAME AriaBridgeControls COMMAND AriaBridgeControlTests)
+endif()

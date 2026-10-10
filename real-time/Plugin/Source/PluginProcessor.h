@@ -10,7 +10,7 @@ class AriaBridgeAudioProcessor final : public juce::AudioProcessor,
                                        private juce::MidiInputCallback
 {
 public:
-    // Knobs first (temp..grade), then buttons (record..cancel). `record` marks the
+    // Knobs first (temp..measures), then buttons. `record` marks the
     // knob/button boundary; anything >= record is a momentary/toggle button.
     enum class ControlId
     {
@@ -19,11 +19,17 @@ public:
         minP,
         tokens,
         grade,
+        track,
+        slot,
+        measures,
         record,
         sync,
         commit,
         play,
         cancel,
+        clip,
+        loop,
+        autoFire,
         count
     };
 
@@ -76,6 +82,8 @@ public:
     int getMappedMidiCC(ControlId controlId) const;
     int getMappedButtonMidi(ControlId buttonId) const;
     bool isLearningControl(ControlId controlId) const;
+    double getControlValue(ControlId controlId) const;
+    void setControlValue(ControlId controlId, double value);
 
     OSCStateSnapshot getOSCStateSnapshot() const;
     void setEditor(AriaBridgeAudioProcessorEditor* editorToUse);
@@ -105,6 +113,8 @@ private:
     std::array<int, static_cast<int>(ControlId::count)> midiMappings {};
     std::array<double, static_cast<int>(ControlId::count)> pendingMidiValues {};
     std::array<bool, static_cast<int>(ControlId::count)> pendingMidiValueDirty {};
+    std::array<double, static_cast<int>(ControlId::count)> controlValues {};
+    std::array<int, 128> lastControllerValues {};
     std::atomic<int> learningControlIndex { -1 };
     std::vector<std::unique_ptr<juce::MidiInput>> standaloneMidiInputs;
 

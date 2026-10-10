@@ -23,10 +23,18 @@ struct ControlSpec
 
 constexpr std::array<ControlSpec, knobCount> controlSpecs {{
     { "/aria/temp", 0.1, 2.0, false },
-    { "/aria/top_p", 0.1, 1.0, false },
-    { "/aria/min_p", 0.0, 0.3, false },
+    { "/aria/top_p", 0.7, 1.0, false },
+    { "/aria/min_p", 0.0, 0.1, false },
     { "/aria/tokens", 0.0, 2048.0, true },
     { "/aria/grade", 1.0, 5.0, true },
+    { "/aria/track", 0.0, 10.0, true },
+    { "/aria/slot", 0.0, 10.0, true },
+    { "/aria/measures", 0.0, 60.0, true },
+}};
+
+constexpr std::array<double, controlCount> defaultControlValues {{
+    1.0, 0.98, 0.01, 1000.0, 3.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 }};
 
 int toIndex(AriaBridgeAudioProcessor::ControlId controlId)
@@ -47,7 +55,14 @@ int normaliseOscIntValue(const juce::String& address, int value)
     if (address == "/aria/grade")
         return juce::jlimit(1, 5, value);
 
-    if (address == "/aria/record")
+    if (address == "/aria/track" || address == "/aria/slot")
+        return juce::jlimit(0, 10, value);
+
+    if (address == "/aria/measures")
+        return juce::jlimit(0, 60, value);
+
+    if (address == "/aria/record" || address == "/aria/clip"
+        || address == "/aria/loop" || address == "/aria/fire")
         return juce::jlimit(0, 1, value);
 
     return value;
@@ -235,6 +250,7 @@ AriaBridgeAudioProcessor::AriaBridgeAudioProcessor()
     midiMappings.fill(-1);
     pendingMidiValues.fill(0.0);
     pendingMidiValueDirty.fill(false);
+    controlValues = defaultControlValues;
     oscReceiverThread = std::make_unique<OSCReceiverThread>(*this);
     oscReceiverThread->startThread();
     // Ping the backend every 2s so status/params refresh. The plugin is a pure OSC
@@ -360,7 +376,9 @@ void AriaBridgeAudioProcessor::changeProgramName(int, const juce::String&)
 void AriaBridgeAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     juce::XmlElement state("AriaBridgeState");
+    state.setAttribute("version", 2);
     auto* mappings = state.createNewChildElement("MidiMappings");
+    auto* values = state.createNewChildElement("ControlValues");
 
     const juce::SpinLock::ScopedLockType lock(midiMappingLock);
 
@@ -369,6 +387,9 @@ void AriaBridgeAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         auto* mapping = mappings->createNewChildElement("Mapping");
         mapping->setAttribute("control", index);
         mapping->setAttribute("cc", midiMappings[static_cast<size_t>(index)]);
+        auto* value = values->createNewChildElement("Value");
+        value->setAttribute("control", index);
+        value->setAttribute("value", controlValues[static_cast<size_t>(index)]);
     }
 
     copyXmlToBinary(state, destData);
@@ -378,6 +399,7 @@ void AriaBridgeAudioProcessor::setStateInformation(const void* data, int sizeInB
 {
     std::array<int, controlCount> loadedMappings {};
     loadedMappings.fill(-1);
+    auto loadedValues = defaultControlValues;
 
     if (const auto xmlState = getXmlFromBinary(data, sizeInBytes))
     {
@@ -385,10 +407,28 @@ void AriaBridgeAudioProcessor::setStateInformation(const void* data, int sizeInB
         {
             for (auto* mapping = mappings->getFirstChildElement(); mapping != nullptr; mapping = mapping->getNextElement())
             {
-                const auto controlIndex = mapping->getIntAttribute("control", -1);
+                auto controlIndex = mapping->getIntAttribute("control", -1);
+
+                // Version 1 had five knobs followed by five buttons. Keep their mappings
+                // attached to the same actions after inserting the three Ableton knobs.
+                if (xmlState->getIntAttribute("version", 1) < 2 && controlIndex >= 5)
+                    controlIndex = controlIndex < 10 ? controlIndex + 3 : -1;
 
                 if (juce::isPositiveAndBelow(controlIndex, controlCount))
                     loadedMappings[static_cast<size_t>(controlIndex)] = mapping->getIntAttribute("cc", -1);
+            }
+        }
+
+        if (auto* values = xmlState->getChildByName("ControlValues"))
+        {
+            for (auto* value = values->getFirstChildElement(); value != nullptr; value = value->getNextElement())
+            {
+                const auto index = value->getIntAttribute("control", -1);
+                const auto stored = value->getDoubleAttribute("value");
+                if (juce::isPositiveAndBelow(index, controlCount) && std::isfinite(stored))
+                    loadedValues[static_cast<size_t>(index)] = index < knobCount
+                        ? snappedControlValue(static_cast<ControlId>(index), stored)
+                        : juce::jlimit(0.0, 1.0, stored);
             }
         }
     }
@@ -396,6 +436,8 @@ void AriaBridgeAudioProcessor::setStateInformation(const void* data, int sizeInB
     {
         const juce::SpinLock::ScopedLockType lock(midiMappingLock);
         midiMappings = loadedMappings;
+        controlValues = loadedValues;
+        pendingMidiValueDirty.fill(false);
     }
 
     triggerAsyncUpdate();
@@ -459,6 +501,22 @@ bool AriaBridgeAudioProcessor::isLearningControl(ControlId controlId) const
     return learningControlIndex.load() == toIndex(controlId);
 }
 
+double AriaBridgeAudioProcessor::getControlValue(ControlId controlId) const
+{
+    const juce::SpinLock::ScopedLockType lock(midiMappingLock);
+    return controlValues[static_cast<size_t>(toIndex(controlId))];
+}
+
+void AriaBridgeAudioProcessor::setControlValue(ControlId controlId, double value)
+{
+    if (! std::isfinite(value))
+        return;
+    const auto index = toIndex(controlId);
+    const juce::SpinLock::ScopedLockType lock(midiMappingLock);
+    controlValues[static_cast<size_t>(index)] = index < knobCount
+        ? snappedControlValue(controlId, value) : juce::jlimit(0.0, 1.0, value);
+}
+
 AriaBridgeAudioProcessor::OSCStateSnapshot AriaBridgeAudioProcessor::getOSCStateSnapshot() const
 {
     const juce::ScopedLock lock(oscStateLock);
@@ -504,6 +562,7 @@ void AriaBridgeAudioProcessor::handleAsyncUpdate()
             continue;
 
         const auto controlId = static_cast<ControlId>(index);
+        setControlValue(controlId, midiValuesToApply[static_cast<size_t>(index)]);
 
         if (controlSpecs[static_cast<size_t>(index)].integerOnly)
             sendOSC(controlAddress(controlId), juce::roundToInt(midiValuesToApply[static_cast<size_t>(index)]));
@@ -522,6 +581,7 @@ void AriaBridgeAudioProcessor::handleAsyncUpdate()
 
     if (activeEditor != nullptr)
     {
+        activeEditor->refreshControlValues();
         activeEditor->refreshStatusDisplay();
         activeEditor->repaint();
     }
@@ -626,12 +686,17 @@ void AriaBridgeAudioProcessor::handleIncomingOSCMessage(const void* data, size_t
         return;
     }
 
-    if (address == "/generation_progress" && typeTags == ",i")
+    if (address == "/generation_progress" && (typeTags == ",i" || typeTags == ",f"))
     {
         int percent = 0;
+        float floatPercent = 0.0f;
 
-        if (readInt32(bytes, sizeInBytes, offset, percent))
+        const bool valid = typeTags == ",i" ? readInt32(bytes, sizeInBytes, offset, percent)
+            : readFloat32(bytes, sizeInBytes, offset, floatPercent);
+        if (valid)
         {
+            if (typeTags == ",f")
+                percent = juce::roundToInt(floatPercent);
             juce::MessageManager::callAsync([this, percent]
             {
                 if (activeEditor != nullptr)
@@ -702,6 +767,8 @@ void AriaBridgeAudioProcessor::handleMidiMessage(const juce::MidiMessage& messag
 
         {
             const juce::SpinLock::ScopedLockType lock(midiMappingLock);
+            const bool pressed = ccValue > 0 && lastControllerValues[static_cast<size_t>(ccNumber)] == 0;
+            lastControllerValues[static_cast<size_t>(ccNumber)] = ccValue;
 
             if (juce::isPositiveAndBelow(learningIndex, controlCount))
             {
@@ -719,7 +786,7 @@ void AriaBridgeAudioProcessor::handleMidiMessage(const juce::MidiMessage& messag
                         midiValueToControlValue(static_cast<ControlId>(learningIndex), ccValue);
                 }
 
-                pendingMidiValueDirty[static_cast<size_t>(learningIndex)] = true;
+                pendingMidiValueDirty[static_cast<size_t>(learningIndex)] = learningIndex < knobCount || pressed;
                 learningControlIndex.store(-1);
                 shouldTrigger = true;
             }
@@ -736,8 +803,11 @@ void AriaBridgeAudioProcessor::handleMidiMessage(const juce::MidiMessage& messag
                             midiValueToControlValue(static_cast<ControlId>(index), ccValue);
                     }
 
-                    pendingMidiValueDirty[static_cast<size_t>(index)] = true;
-                    shouldTrigger = true;
+                    if (index < knobCount || pressed)
+                    {
+                        pendingMidiValueDirty[static_cast<size_t>(index)] = true;
+                        shouldTrigger = true;
+                    }
                 }
             }
         }

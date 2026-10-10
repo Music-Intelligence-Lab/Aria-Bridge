@@ -4,20 +4,19 @@
 
 namespace
 {
-const juce::Colour ground      = juce::Colour::fromRGB(10, 11, 20);
-const juce::Colour panelFill   = juce::Colour::fromRGB(18, 19, 31);
-const juce::Colour knobDark    = juce::Colour::fromRGB(12, 13, 24);
-const juce::Colour buttonDark  = juce::Colour::fromRGB(22, 24, 40);
-const juce::Colour ink         = juce::Colour::fromRGB(238, 241, 255);
-const juce::Colour muted        = juce::Colour::fromRGB(118, 124, 160);
-const juce::Colour lineColour  = juce::Colour::fromRGB(35, 38, 62);
-
-const juce::Colour cyan   = juce::Colour::fromRGB(56, 224, 230);   // sampling
-const juce::Colour mint   = juce::Colour::fromRGB(79, 227, 154);   // transport panel + play
-const juce::Colour amber  = juce::Colour::fromRGB(255, 194, 74);   // feedback + generation bar
-const juce::Colour peri   = juce::Colour::fromRGB(139, 139, 255);  // playback bar
-const juce::Colour coral  = juce::Colour::fromRGB(255, 107, 107);  // record
-const juce::Colour orange = juce::Colour::fromRGB(255, 140, 66);   // cancel
+const juce::Colour ground     = juce::Colour::fromRGB(54, 54, 54);
+const juce::Colour knobDark   = juce::Colour::fromRGB(48, 48, 48);
+const juce::Colour buttonDark = juce::Colour::fromRGB(25, 25, 25);
+const juce::Colour ink        = juce::Colour::fromRGB(176, 176, 176);
+const juce::Colour muted      = juce::Colour::fromRGB(126, 126, 126);
+const juce::Colour lineColour = juce::Colour::fromRGB(88, 88, 88);
+const juce::Colour cyan       = juce::Colour::fromRGB(3, 195, 213);
+const juce::Colour mint       = juce::Colour::fromRGB(0, 211, 141);
+const juce::Colour amber      = juce::Colour::fromRGB(255, 183, 77);
+const juce::Colour coral      = juce::Colour::fromRGB(255, 77, 71);
+const juce::Colour magenta    = juce::Colour::fromRGB(245, 0, 255);
+const juce::Colour green      = juce::Colour::fromRGB(86, 255, 88);
+const juce::Colour progressGreen = juce::Colour::fromRGB(0, 156, 46);
 
 juce::String formatFloatValue(double value) { return juce::String(value, 2); }
 juce::String formatIntValue(double value)   { return juce::String(juce::roundToInt(value)); }
@@ -32,173 +31,211 @@ juce::Colour stateColour(const juce::String& status)
 {
     if (status == "RECORDING")  return coral;
     if (status == "GENERATING") return amber;
-    if (status == "PLAYING")    return peri;
+    if (status == "PLAYING")    return mint;
     if (status == "IDLE" || status == "READY") return cyan;
-    if (status == "DISCONNECTED") return muted;
-    return ink;
+    return muted;
+}
+
+juce::Rectangle<float> actionShape(const juce::Button& button)
+{
+    const auto bounds = button.getLocalBounds().toFloat();
+    const float size = juce::jmin(bounds.getWidth() - 4.0f, bounds.getHeight() * 0.64f);
+    return { bounds.getCentreX() - size * 0.5f, bounds.getY(), size, size };
 }
 }
 
 void AriaLookAndFeel::drawRotarySlider(juce::Graphics& g,
-                                       int x, int y, int width, int height,
-                                       float sliderPosProportional,
-                                       float rotaryStartAngle,
-                                       float rotaryEndAngle,
-                                       juce::Slider& slider)
+                                      int x, int y, int width, int height,
+                                      float sliderPosProportional,
+                                      float rotaryStartAngle, float rotaryEndAngle,
+                                      juce::Slider& slider)
 {
-    const auto accent = slider.findColour(juce::Slider::rotarySliderFillColourId);
-    const bool hero = static_cast<bool>(slider.getProperties().getWithDefault("hero", false));
-
-    const auto bounds = juce::Rectangle<float>((float) x, (float) y, (float) width, (float) height);
+    const auto bounds = juce::Rectangle<float>((float) x, (float) y, (float) width, (float) height).reduced(2.0f);
     const auto centre = bounds.getCentre();
-    const auto boundsRadius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    const auto rBody = boundsRadius * 0.70f;
-    const auto rArc  = boundsRadius * 0.90f;
-    const auto angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
-    const auto knobBounds = juce::Rectangle<float>(centre.x - rBody, centre.y - rBody, rBody * 2.0f, rBody * 2.0f);
+    const float radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
+    const float stroke = juce::jmax(2.0f, radius * 0.17f);
+    const float arcRadius = radius - stroke * 0.5f;
+    const float angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
 
-    // Line weights scale with the knob so big knobs don't look thin.
-    const float arcStroke = juce::jmax(2.5f, rArc * 0.13f);
-    const float indStroke = juce::jmax(2.0f, rBody * 0.16f);
-
-    g.setColour(hero ? accent : knobDark);
-    g.fillEllipse(knobBounds);
-    g.setColour(hero ? juce::Colours::white.withAlpha(0.10f) : lineColour);
-    g.drawEllipse(knobBounds, juce::jmax(1.0f, boundsRadius * 0.05f));
-
+    g.setColour(ground);
+    g.fillEllipse(bounds);
     juce::Path track;
-    track.addCentredArc(centre.x, centre.y, rArc, rArc, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour(accent.withAlpha(0.18f));
-    g.strokePath(track, juce::PathStrokeType(arcStroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    track.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
+    g.setColour(buttonDark);
+    g.strokePath(track, juce::PathStrokeType(stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    juce::Path value;
-    value.addCentredArc(centre.x, centre.y, rArc, rArc, 0.0f, rotaryStartAngle, angle, true);
-    g.setColour(accent);
-    g.strokePath(value, juce::PathStrokeType(arcStroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    if (sliderPosProportional > 0.0f)
+    {
+        juce::Path value;
+        value.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f, rotaryStartAngle, angle, true);
+        g.setColour(slider.findColour(juce::Slider::rotarySliderFillColourId));
+        g.strokePath(value, juce::PathStrokeType(stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
 
-    const auto tip = centre.getPointOnCircumference(rBody * 0.82f, angle);
-    const auto tail = centre.getPointOnCircumference(rBody * 0.12f, angle);
-    g.setColour(hero ? knobDark : ink);
-    g.drawLine({ tail, tip }, indStroke);
+    g.setColour(buttonDark);
+    g.drawLine({ centre.getPointOnCircumference(radius * 0.12f, angle),
+                 centre.getPointOnCircumference(radius * 0.77f, angle) },
+               juce::jmax(2.0f, radius * 0.15f));
 }
 
 void AriaLookAndFeel::drawButtonBackground(juce::Graphics& g,
-                                           juce::Button& button,
-                                           const juce::Colour& backgroundColourToUse,
-                                           bool isMouseOverButton,
-                                           bool isButtonDown)
+                                          juce::Button& button,
+                                          const juce::Colour&,
+                                          bool isMouseOverButton,
+                                          bool isButtonDown)
 {
-    const bool on = button.getToggleState();
-    const auto accent = button.findColour(juce::TextButton::buttonColourId);
-    auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
-    const float corner = juce::jmax(6.0f, bounds.getHeight() * 0.18f);
-
-    auto fill = on ? backgroundColourToUse : buttonDark;
+    const bool on = button.getToggleState() || isButtonDown;
+    const auto shape = actionShape(button).reduced(0.75f);
+    auto fill = on ? button.findColour(juce::TextButton::buttonOnColourId) : buttonDark;
     if (! on && isMouseOverButton)
-        fill = fill.interpolatedWith(accent, 0.14f);
-    if (isButtonDown)
-        fill = fill.darker(0.18f);
-
+        fill = fill.brighter(0.12f);
     g.setColour(fill);
-    g.fillRoundedRectangle(bounds, corner);
+    if (button.getClickingTogglesState())
+        g.fillRect(shape);
+    else
+        g.fillEllipse(shape);
 
-    g.setColour(on ? backgroundColourToUse : accent);
-    g.drawRoundedRectangle(bounds, corner, 1.5f);
+    g.setColour(buttonDark.darker(0.2f));
+    if (button.getClickingTogglesState())
+        g.drawRect(shape, 1.5f);
+    else
+        g.drawEllipse(shape, 1.5f);
 }
 
 void AriaLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& button, bool, bool)
 {
-    const bool on = button.getToggleState();
-    g.setColour(on ? juce::Colour::fromRGB(12, 20, 22) : button.findColour(juce::TextButton::buttonColourId));
-    // Font scales with the button height so text grows with the window.
-    g.setFont(juce::Font(juce::jlimit(9.0f, 24.0f, (float) button.getHeight() * 0.34f), juce::Font::bold));
-    g.drawFittedText(button.getButtonText().toUpperCase(), button.getLocalBounds(), juce::Justification::centred, 1);
+    const auto shape = actionShape(button);
+    const float scale = shape.getWidth() / 50.0f;
+    const auto label = button.getLocalBounds().toFloat().withTop(shape.getBottom() + 3.0f * scale);
+    g.setColour(knobDark);
+    g.fillRoundedRectangle(label, 3.0f * scale);
+    g.setColour(ink);
+    g.setFont(juce::Font(juce::FontOptions(14.0f * scale)));
+    g.drawFittedText(button.getButtonText(), label.toNearestInt(), juce::Justification::centred, 1);
 }
 
 AriaBridgeAudioProcessorEditor::AriaBridgeAudioProcessorEditor(AriaBridgeAudioProcessor& processor)
-    : AudioProcessorEditor(&processor),
-      audioProcessor(processor)
+    : AudioProcessorEditor(&processor), audioProcessor(processor)
 {
     setLookAndFeel(&lookAndFeel);
-    windowConstrainer.setMinimumSize(560, 300);
-    windowConstrainer.setMaximumSize(1500, 760);
+    windowConstrainer.setMinimumSize(560, 190);
+    windowConstrainer.setMaximumSize(1500, 500);
 
-    configureKnob(tempSlider, tempLabel, tempValueLabel, "temp", 0.1, 2.0, 0.001, 1.00, "/aria/temp",
-                  AriaBridgeAudioProcessor::ControlId::temp, cyan, false);
-    configureKnob(topPSlider, topPLabel, topPValueLabel, "top_p", 0.1, 1.0, 0.001, 0.98, "/aria/top_p",
-                  AriaBridgeAudioProcessor::ControlId::topP, cyan, false);
-    configureKnob(minPSlider, minPLabel, minPValueLabel, "min_p", 0.0, 0.3, 0.001, 0.01, "/aria/min_p",
-                  AriaBridgeAudioProcessor::ControlId::minP, cyan, false);
-    configureKnob(tokensSlider, tokensLabel, tokensValueLabel, "tokens", 0, 2048, 1.0, 1000, "/aria/tokens",
-                  AriaBridgeAudioProcessor::ControlId::tokens, cyan, true);   // hero
-    configureKnob(gradeSlider, gradeLabel, gradeValueLabel, "grade", 1, 5, 1.0, 3, "/aria/grade",
-                  AriaBridgeAudioProcessor::ControlId::grade, amber, false);
+    using Control = AriaBridgeAudioProcessor::ControlId;
+    configureKnob(tempSlider, tempLabel, tempValueLabel, "temp", 0.1, 2.0, 0.01, 1.00, "/aria/temp", Control::temp, cyan);
+    configureKnob(topPSlider, topPLabel, topPValueLabel, "top_p", 0.7, 1.0, 0.01, 0.98, "/aria/top_p", Control::topP, cyan);
+    configureKnob(minPSlider, minPLabel, minPValueLabel, "min_p", 0.0, 0.1, 0.01, 0.01, "/aria/min_p", Control::minP, cyan);
+    configureKnob(tokensSlider, tokensLabel, tokensValueLabel, "tokens", 0, 2048, 1.0, 1000, "/aria/tokens", Control::tokens, cyan);
+    configureKnob(trackSlider, trackLabel, trackValueLabel, "track", 0, 10, 1.0, 0, "/aria/track", Control::track, cyan);
+    configureKnob(slotSlider, slotLabel, slotValueLabel, "slot", 0, 10, 1.0, 0, "/aria/slot", Control::slot, cyan);
+    configureKnob(measuresSlider, measuresLabel, measuresValueLabel, "measures", 0, 60, 1.0, 0, "/aria/measures", Control::measures, cyan);
+    configureKnob(gradeSlider, gradeLabel, gradeValueLabel, "grade", 1, 5, 1.0, 3, "/aria/grade", Control::grade, cyan);
 
-    // Distinct colours per transport action.
     configureActionButton(recordButton, "record", coral);
+    configureActionButton(clipButton, "clip", cyan);
+    configureActionButton(loopButton, "loop", magenta);
+    configureActionButton(autoButton, "auto", green);
     configureActionButton(playButton, "play", mint);
-    configureActionButton(cancelButton, "cancel", orange);
-    configureActionButton(syncButton, "sync", muted);
-    configureActionButton(commitButton, "commit", amber);
+    configureActionButton(cancelButton, "cancel", juce::Colour::fromRGB(255, 105, 127));
+    configureActionButton(syncButton, "sync", cyan);
+    configureActionButton(commitButton, "commit", juce::Colour::fromRGB(0, 31, 139));
 
-    recordButton.onContextMenuRequested = [this] { showButtonContextMenu(AriaBridgeAudioProcessor::ControlId::record); };
-    playButton.onContextMenuRequested   = [this] { showButtonContextMenu(AriaBridgeAudioProcessor::ControlId::play); };
-    cancelButton.onContextMenuRequested = [this] { showButtonContextMenu(AriaBridgeAudioProcessor::ControlId::cancel); };
-    syncButton.onContextMenuRequested   = [this] { showButtonContextMenu(AriaBridgeAudioProcessor::ControlId::sync); };
-    commitButton.onContextMenuRequested = [this] { showButtonContextMenu(AriaBridgeAudioProcessor::ControlId::commit); };
+    for (const auto control : { Control::record, Control::clip, Control::loop, Control::autoFire })
+    {
+        auto& button = getButtonForControl(control);
+        button.setClickingTogglesState(true);
+        button.setToggleState(audioProcessor.getControlValue(control) >= 0.5, juce::dontSendNotification);
+    }
+    for (int index = static_cast<int>(Control::record); index < static_cast<int>(Control::count); ++index)
+    {
+        const auto control = static_cast<Control>(index);
+        getButtonForControl(control).onContextMenuRequested = [this, control] { showButtonContextMenu(control); };
+    }
 
-    recordButton.setClickingTogglesState(true);
     recordButton.onClick = [this]
     {
         isRecordEnabled = recordButton.getToggleState();
+        audioProcessor.setControlValue(Control::record, isRecordEnabled ? 1.0 : 0.0);
         audioProcessor.sendOSC("/aria/record", isRecordEnabled ? 1 : 0);
     };
-
+    clipButton.onClick = [this]
+    {
+        const bool enabled = clipButton.getToggleState();
+        audioProcessor.setControlValue(Control::clip, enabled ? 1.0 : 0.0);
+        audioProcessor.sendOSC("/aria/clip", enabled ? 1 : 0);
+        if (! enabled && loopButton.getToggleState())
+        {
+            loopButton.setToggleState(false, juce::dontSendNotification);
+            audioProcessor.setControlValue(Control::loop, 0.0);
+            audioProcessor.sendOSC("/aria/loop", 0);
+        }
+        // The backend disables the shared progress slider while writing clips.
+        playbackDisplayed = 0.0;
+        repaint();
+    };
+    loopButton.onClick = [this]
+    {
+        const bool enabled = loopButton.getToggleState();
+        if (enabled && ! clipButton.getToggleState())
+        {
+            clipButton.setToggleState(true, juce::dontSendNotification);
+            audioProcessor.setControlValue(Control::clip, 1.0);
+            audioProcessor.sendOSC("/aria/clip", 1);
+        }
+        audioProcessor.setControlValue(Control::loop, enabled ? 1.0 : 0.0);
+        audioProcessor.sendOSC("/aria/loop", enabled ? 1 : 0);
+        repaint();
+    };
+    autoButton.onClick = [this]
+    {
+        const bool enabled = autoButton.getToggleState();
+        audioProcessor.setControlValue(Control::autoFire, enabled ? 1.0 : 0.0);
+        audioProcessor.sendOSC("/aria/fire", enabled ? 1 : 0);
+    };
     syncButton.onClick = [this]
     {
-        audioProcessor.sendOSC("/aria/temp", static_cast<float>(tempSlider.getValue()));
-        audioProcessor.sendOSC("/aria/top_p", static_cast<float>(topPSlider.getValue()));
-        audioProcessor.sendOSC("/aria/min_p", static_cast<float>(minPSlider.getValue()));
-        audioProcessor.sendOSC("/aria/tokens", juce::roundToInt(tokensSlider.getValue()));
-        audioProcessor.sendOSC("/aria/grade", juce::roundToInt(gradeSlider.getValue()));
+        for (int index = 0; index < static_cast<int>(Control::record); ++index)
+        {
+            const auto control = static_cast<Control>(index);
+            auto& slider = getSliderForControl(control);
+            slider.onValueChange();
+        }
+        audioProcessor.sendOSC("/aria/clip", clipButton.getToggleState() ? 1 : 0);
+        audioProcessor.sendOSC("/aria/loop", loopButton.getToggleState() ? 1 : 0);
+        audioProcessor.sendOSC("/aria/fire", autoButton.getToggleState() ? 1 : 0);
         audioProcessor.sendOSC("/aria/ping");
     };
-
     commitButton.onClick = [this] { audioProcessor.sendOSC("/aria/commit"); };
     playButton.onClick = [this] { audioProcessor.sendOSC("/aria/play"); };
-
-    // Cancel: fire cancel to the backend AND reset local UI so it visibly responds.
     cancelButton.onClick = [this]
     {
         audioProcessor.sendOSC("/aria/cancel");
         audioProcessor.sendOSC("/cancel_playback");
         setGenerationActive(false);
         stopPlayback();
-        if (recordButton.getToggleState())
-        {
-            recordButton.setToggleState(false, juce::dontSendNotification);
-            isRecordEnabled = false;
-        }
+        recordButton.setToggleState(false, juce::dontSendNotification);
+        audioProcessor.setControlValue(Control::record, 0.0);
+        isRecordEnabled = false;
     };
 
-    statusLabel.setJustificationType(juce::Justification::centredLeft);
-    statusLabel.setColour(juce::Label::textColourId, cyan);
-    statusLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    recordButton.setTooltip("Record input; release to generate.");
+    clipButton.setTooltip("Write generated MIDI to the Ableton clip at track / slot.");
+    loopButton.setTooltip("Run alternating recording and generation with clip output enabled.");
+    autoButton.setTooltip("Automatically launch a clip after writing it.");
+    trackSlider.setTooltip("Ableton destination track (0-based).");
+    slotSlider.setTooltip("Ableton destination clip slot (0-based).");
+    measuresSlider.setTooltip("Clip length in measures. 0 keeps the full clip.");
+    gradeSlider.setTooltip("Rate the take from 1 to 5, then commit.");
+    statusLabel.setColour(juce::Label::textColourId, juce::Colours::transparentBlack);
     addAndMakeVisible(statusLabel);
-
-    logLabel.setJustificationType(juce::Justification::centredRight);
-    logLabel.setColour(juce::Label::textColourId, muted);
-    logLabel.setFont(juce::Font(11.5f));
-    addAndMakeVisible(logLabel);
-
-    progressLabel.setJustificationType(juce::Justification::centred);
-    progressLabel.setColour(juce::Label::textColourId, muted);
-    progressLabel.setFont(juce::Font(10.5f));
+    logLabel.setVisible(false);
+    progressLabel.setColour(juce::Label::textColourId, juce::Colours::transparentBlack);
     addAndMakeVisible(progressLabel);
 
     setResizable(true, false);
-    setResizeLimits(560, 300, 1500, 760);
-    setSize(760, 360);
+    setResizeLimits(560, 190, 1500, 500);
+    setSize(660, 220);
+    refreshControlValues();
     refreshStatusDisplay();
     audioProcessor.setEditor(this);
     configureStandaloneWindowIfNeeded();
@@ -212,137 +249,60 @@ AriaBridgeAudioProcessorEditor::~AriaBridgeAudioProcessorEditor()
     audioProcessor.clearEditor(this);
 }
 
-void AriaBridgeAudioProcessorEditor::drawPanel(juce::Graphics& g, juce::Rectangle<int> r, juce::Colour accent, const juce::String& head)
-{
-    const auto rf = r.toFloat();
-    juce::DropShadow(accent.withAlpha(0.28f), 16, { 0, 0 }).drawForRectangle(g, r);
-    g.setColour(panelFill);
-    g.fillRoundedRectangle(rf, 12.0f);
-    g.setColour(juce::Colours::white.withAlpha(0.03f));
-    g.drawRoundedRectangle(rf.reduced(1.0f), 11.0f, 1.0f);
-    g.setColour(accent.withAlpha(0.85f));
-    g.drawRoundedRectangle(rf.reduced(0.75f), 12.0f, 1.5f);
-
-    g.setColour(accent);
-    g.setFont(juce::Font(11.0f * uiScale, juce::Font::bold));
-    g.drawText(head.toUpperCase(), r.withHeight(juce::roundToInt(18 * uiScale)).translated(0, juce::roundToInt(7 * uiScale)),
-               juce::Justification::centred);
-}
-
 void AriaBridgeAudioProcessorEditor::paint(juce::Graphics& g)
 {
     const float s = uiScale;
     g.fillAll(ground);
-
-    // Header wordmark + meta.
-    auto area = getLocalBounds().reduced(juce::roundToInt(14 * s));
-    auto header = area.removeFromTop(juce::roundToInt(52 * s));
-    juce::Font brand(30.0f * s, juce::Font::bold);
-    g.setFont(brand);
-    const int aw = brand.getStringWidth("Aria");
+    g.setColour(lineColour);
+    g.drawRect(getLocalBounds(), juce::jmax(1, juce::roundToInt(s)));
     g.setColour(ink);
-    g.drawText("Aria", header.getX(), header.getY() + juce::roundToInt(2 * s), aw + 4, juce::roundToInt(34 * s), juce::Justification::centredLeft);
-    g.setColour(cyan);
-    g.drawText("Bridge", header.getX() + aw + 2, header.getY() + juce::roundToInt(2 * s), juce::roundToInt(240 * s), juce::roundToInt(34 * s), juce::Justification::centredLeft);
-    g.setColour(muted);
-    g.setFont(juce::Font(9.0f * s, juce::Font::bold));
-    g.drawText("REAL-TIME CONTINUATION", header.getX() + 2, header.getY() + juce::roundToInt(36 * s), juce::roundToInt(300 * s), juce::roundToInt(12 * s), juce::Justification::centredLeft);
-    g.setFont(juce::Font(10.5f * s));
-    g.drawText("v0.2  \xc2\xb7  OSC 9000/9001", header.removeFromRight(juce::roundToInt(220 * s)), juce::Justification::topRight);
+    g.setFont(juce::Font(juce::FontOptions(20.0f * s)));
+    g.drawText("Aria Bridge", headerRect, juce::Justification::centred);
+    g.setColour(lineColour);
+    g.drawRoundedRectangle(headerRect.withTop(headerRect.getBottom() + juce::roundToInt(3 * s))
+                                     .withHeight(juce::roundToInt(3 * s)).toFloat(), 1.5f * s, 1.0f);
 
-    // Panels — the play panel head flips to GEN while generating.
-    drawPanel(g, samplingPanel,  cyan,  "Sampling");
-    drawPanel(g, transportPanel, mint,  "Transport");
-    drawPanel(g, feedbackPanel,  amber, "Feedback");
-    drawPanel(g, playbackPanel,  peri,  isGenerating ? "Gen" : "Play");
+    const float dot = 5.0f * s;
+    const auto colour = stateColour(statusLabel.getText());
+    g.setColour(colour);
+    g.fillEllipse(headerRect.getRight() - 12.0f * s, headerRect.getCentreY() - dot * 0.5f, dot, dot);
 
-    // Generating sweep across the sampling panel.
-    if (isGenerating)
+    const auto bar = barRect.toFloat();
+    const bool clipMode = clipButton.getToggleState();
+    g.setColour(buttonDark);
+    g.fillRect(bar);
+    const float progress = clipMode ? 0.0f : (float) juce::jlimit(0.0, 1.0, playbackDisplayed);
+    const float fillHeight = progress * bar.getHeight();
+    if (fillHeight > 0.0f)
     {
-        juce::Graphics::ScopedSaveState save(g);
-        g.reduceClipRegion(samplingPanel.reduced(2));
-        const float w = (float) samplingPanel.getWidth();
-        const float sweepX = samplingPanel.getX() + (std::sin(phase * 0.06f) * 0.5f + 0.5f) * w * 1.6f - w * 0.3f;
-        juce::ColourGradient grad(juce::Colours::transparentBlack, sweepX - 60.0f, 0,
-                                  juce::Colours::transparentBlack, sweepX + 60.0f, 0, false);
-        grad.addColour(0.5, cyan.withAlpha(0.16f));
-        g.setGradientFill(grad);
-        g.fillRect(samplingPanel);
+        g.setColour(progressGreen.withAlpha(clipMode ? 0.25f : 1.0f));
+        g.fillRect(bar.withTop(bar.getBottom() - fillHeight));
     }
+    g.setColour(progressGreen.withAlpha(clipMode ? 0.25f : 1.0f));
+    g.fillRect(bar.withTop(bar.getBottom() - 5.0f * s).reduced(1.0f * s, 0.0f));
+    const float handleSize = bar.getWidth() * 0.76f;
+    const float handleY = bar.getY() + 6.0f * s + progress * (bar.getHeight() - handleSize - 12.0f * s);
+    g.setColour(clipMode ? knobDark.withAlpha(0.45f) : knobDark);
+    g.fillEllipse(bar.getCentreX() - handleSize * 0.5f, handleY, handleSize, handleSize);
 
-    // Record pulse ring.
-    if (isRecordEnabled)
+    using Control = AriaBridgeAudioProcessor::ControlId;
+    for (int index = 0; index < static_cast<int>(Control::count); ++index)
     {
-        const float a = 0.30f + 0.30f * (float) std::sin(phase * 0.22);
-        g.setColour(coral.withAlpha(a));
-        g.drawRoundedRectangle(recordButton.getBounds().toFloat().expanded(3.0f * s), 9.0f, 2.5f * s);
-    }
-
-    // Vertical bar — generation progress (amber) or playback progress (periwinkle).
-    {
-        const bool generating = isGenerating;
-        const auto barColour = generating ? amber : peri;
-        const int barW = juce::roundToInt(24 * s);
-        auto bar = juce::Rectangle<float>((float) (barRect.getCentreX() - barW / 2), (float) barRect.getY(),
-                                          (float) barW, (float) barRect.getHeight());
-        g.setColour(knobDark);
-        g.fillRoundedRectangle(bar, 7.0f);
-        g.setColour(lineColour);
-        g.drawRoundedRectangle(bar, 7.0f, 1.5f);
-
-        const float fillH = bar.getHeight() * (float) juce::jlimit(0.0, 1.0, playbackDisplayed);
-        if (fillH > 1.0f)
+        const auto control = static_cast<Control>(index);
+        if (! audioProcessor.isLearningControl(control))
+            continue;
+        g.setColour(amber);
+        if (index < static_cast<int>(Control::record))
+            g.drawEllipse(getSliderForControl(control).getBounds().toFloat().expanded(1.5f * s), 2.0f * s);
+        else
         {
-            auto fr = bar.withTop(bar.getBottom() - fillH);
-            juce::Graphics::ScopedSaveState save(g);
-            juce::Path clip;
-            clip.addRoundedRectangle(bar, 7.0f);
-            g.reduceClipRegion(clip);
-
-            juce::ColourGradient grad(barColour.brighter(0.25f), fr.getX(), fr.getY(), barColour, fr.getX(), fr.getBottom(), false);
-            g.setGradientFill(grad);
-            g.fillRect(fr);
-            g.setColour(barColour.withAlpha(0.35f));
-            g.fillRect(fr.withHeight(2.0f));   // bright leading edge
-
-            if (generating || isPlaying)
-            {
-                const float sh = (float) std::fmod(phase * 0.03, 1.0);
-                const float bandY = fr.getBottom() - sh * fr.getHeight();
-                g.setColour(juce::Colours::white.withAlpha(0.22f));
-                g.fillRect(fr.getX(), bandY - 6.0f, fr.getWidth(), 12.0f);
-            }
+            auto& button = getButtonForControl(control);
+            const auto shape = actionShape(button).translated((float) button.getX(), (float) button.getY()).expanded(2.0f * s);
+            if (button.getClickingTogglesState())
+                g.drawRect(shape, 2.0f * s);
+            else
+                g.drawEllipse(shape, 2.0f * s);
         }
-    }
-
-    // Status dot (breathing when connected).
-    {
-        const float a = isConnected ? (0.55f + 0.35f * (float) std::sin(phase * 0.12)) : 1.0f;
-        const float dotR = 5.0f * s;
-        auto d = juce::Rectangle<float>((float) statusStrip.getX() + 14.0f * s, (float) statusStrip.getCentreY() - dotR, dotR * 2.0f, dotR * 2.0f);
-        g.setColour((isConnected ? mint : muted).withAlpha(a * 0.4f));
-        g.fillEllipse(d.expanded(3.0f * s));
-        g.setColour((isConnected ? mint : muted).withAlpha(a));
-        g.fillEllipse(d);
-    }
-
-    // MIDI-learn highlight rings.
-    const auto buttonBase = static_cast<int>(AriaBridgeAudioProcessor::ControlId::record);
-    const auto totalCount = static_cast<int>(AriaBridgeAudioProcessor::ControlId::count);
-
-    for (int index = 0; index < buttonBase; ++index)
-    {
-        const auto controlId = static_cast<AriaBridgeAudioProcessor::ControlId>(index);
-        if (! audioProcessor.isLearningControl(controlId)) continue;
-        g.setColour(amber);
-        g.drawEllipse(getSliderForControl(controlId).getBounds().toFloat().expanded(3.0f * s), 2.5f * s);
-    }
-    for (int index = buttonBase; index < totalCount; ++index)
-    {
-        const auto controlId = static_cast<AriaBridgeAudioProcessor::ControlId>(index);
-        if (! audioProcessor.isLearningControl(controlId)) continue;
-        g.setColour(amber);
-        g.drawRoundedRectangle(getButtonForControl(controlId).getBounds().toFloat().reduced(1.0f), 8.0f, 2.5f * s);
     }
 }
 
@@ -352,111 +312,76 @@ void AriaBridgeAudioProcessorEditor::parentHierarchyChanged()
     configureStandaloneWindowIfNeeded();
 }
 
-void AriaBridgeAudioProcessorEditor::layoutKnob(LearnableSlider& slider, juce::Label& nameLabel, juce::Label& valueLabel,
-                                                juce::Rectangle<int> cell, int knobSize)
+void AriaBridgeAudioProcessorEditor::layoutKnob(LearnableSlider& slider, juce::Label& nameLabel,
+                                               juce::Label& valueLabel, juce::Rectangle<int> cell, int knobSize)
 {
-    const int nameH = juce::roundToInt(14 * uiScale);
-    const int valueH = juce::roundToInt(15 * uiScale);
-    nameLabel.setBounds(cell.getX(), cell.getY(), cell.getWidth(), nameH);
-    valueLabel.setBounds(cell.getX(), cell.getBottom() - valueH, cell.getWidth(), valueH);
-
-    const int bandTop = cell.getY() + nameH + 2;
-    const int bandBottom = cell.getBottom() - valueH - 2;
-    const int band = juce::jmax(10, bandBottom - bandTop);
-    const int size = juce::jmin(knobSize, band, cell.getWidth() - 4);
-    slider.setBounds(cell.getX() + (cell.getWidth() - size) / 2, bandTop + (band - size) / 2, size, size);
+    const int nameH = juce::roundToInt(17 * uiScale);
+    const int valueH = juce::roundToInt(17 * uiScale);
+    nameLabel.setBounds(cell.withHeight(nameH));
+    valueLabel.setBounds(cell.withTop(cell.getBottom() - valueH));
+    const int size = juce::jmin(knobSize, cell.getHeight() - nameH - valueH, cell.getWidth() - 4);
+    slider.setBounds(cell.getCentreX() - size / 2, cell.getY() + nameH, size, size);
 }
 
 void AriaBridgeAudioProcessorEditor::resized()
 {
-    uiScale = juce::jlimit(0.6f, 3.0f, juce::jmin(getWidth() / 760.0f, getHeight() / 360.0f));
+    uiScale = juce::jmin(getWidth() / 660.0f, getHeight() / 220.0f);
     const float s = uiScale;
+    const int left = juce::roundToInt(10 * s);
+    const int top = (getHeight() - juce::roundToInt(220 * s)) / 2;
+    const int barWidth = juce::roundToInt(50 * s);
+    const int barGap = juce::roundToInt(18 * s);
+    barRect = { getWidth() - juce::roundToInt(14 * s) - barWidth, top + juce::roundToInt(10 * s),
+                barWidth, juce::roundToInt(198 * s) };
+    const int controlsRight = barRect.getX() - barGap;
+    const int controlsWidth = controlsRight - left;
+    headerRect = { left + juce::roundToInt(30 * s), top + juce::roundToInt(3 * s),
+                   controlsWidth - juce::roundToInt(60 * s), juce::roundToInt(28 * s) };
+    statusLabel.setBounds(headerRect);
+    progressLabel.setBounds(barRect);
 
-    auto area = getLocalBounds().reduced(juce::roundToInt(14 * s));
-    area.removeFromTop(juce::roundToInt(52 * s));                 // header (drawn in paint)
-    statusStrip = area.removeFromBottom(juce::roundToInt(38 * s));
-    area.removeFromTop(juce::roundToInt(6 * s));
-    area.removeFromBottom(juce::roundToInt(6 * s));
-
-    const int gap = juce::roundToInt(10 * s);
-    auto rack = area;
-    const int w = rack.getWidth();
-    samplingPanel  = rack.removeFromLeft(juce::roundToInt(w * 0.46f)); rack.removeFromLeft(gap);
-    transportPanel = rack.removeFromLeft(juce::roundToInt(w * 0.21f)); rack.removeFromLeft(gap);
-    feedbackPanel  = rack.removeFromLeft(juce::roundToInt(w * 0.17f)); rack.removeFromLeft(gap);
-    playbackPanel  = rack;
-
-    // Scale the knob name/value label fonts with the window.
-    const auto nameFont = juce::Font(11.0f * s, juce::Font::bold);
-    const auto valueFont = juce::Font(12.5f * s, juce::Font::bold);
-    for (auto* l : { &tempLabel, &topPLabel, &minPLabel, &tokensLabel, &gradeLabel })
-        l->setFont(nameFont);
-    for (auto* l : { &tempValueLabel, &topPValueLabel, &minPValueLabel, &tokensValueLabel, &gradeValueLabel })
-        l->setFont(valueFont);
-
-    // Sampling: 4 knobs, order tokens/temp/top_p/min_p (tokens filled).
+    std::array<MidiLearnButton*, 8> buttons {{
+        &recordButton, &clipButton, &loopButton, &autoButton, &playButton, &cancelButton, &syncButton, &commitButton
+    }};
+    std::array<std::tuple<LearnableSlider*, juce::Label*, juce::Label*>, 8> knobs {{
+        { &tempSlider, &tempLabel, &tempValueLabel },
+        { &topPSlider, &topPLabel, &topPValueLabel },
+        { &minPSlider, &minPLabel, &minPValueLabel },
+        { &tokensSlider, &tokensLabel, &tokensValueLabel },
+        { &trackSlider, &trackLabel, &trackValueLabel },
+        { &slotSlider, &slotLabel, &slotValueLabel },
+        { &measuresSlider, &measuresLabel, &measuresValueLabel },
+        { &gradeSlider, &gradeLabel, &gradeValueLabel }
+    }};
+    for (int i = 0; i < 8; ++i)
     {
-        auto inner = samplingPanel.reduced(juce::roundToInt(12 * s));
-        inner.removeFromTop(juce::roundToInt(16 * s));
-        const int cw = inner.getWidth() / 4;
-        std::array<std::tuple<LearnableSlider*, juce::Label*, juce::Label*>, 4> ks {{
-            { &tokensSlider, &tokensLabel, &tokensValueLabel },
-            { &tempSlider, &tempLabel, &tempValueLabel },
-            { &topPSlider, &topPLabel, &topPValueLabel },
-            { &minPSlider, &minPLabel, &minPValueLabel }
-        }};
-        for (int i = 0; i < 4; ++i)
-        {
-            auto cell = inner.withX(inner.getX() + i * cw).withWidth(i == 3 ? inner.getRight() - (inner.getX() + i * cw) : cw);
-            layoutKnob(*std::get<0>(ks[(size_t) i]), *std::get<1>(ks[(size_t) i]), *std::get<2>(ks[(size_t) i]), cell, juce::roundToInt(58 * s));
-        }
+        const int cellLeft = left + controlsWidth * i / 8;
+        const int cellRight = left + controlsWidth * (i + 1) / 8;
+        const int cellWidth = cellRight - cellLeft;
+        buttons[(size_t) i]->setBounds(cellLeft + juce::roundToInt(5 * s), top + juce::roundToInt(58 * s),
+                                      cellWidth - juce::roundToInt(10 * s), juce::roundToInt(82 * s));
+        auto& knob = knobs[(size_t) i];
+        std::get<1>(knob)->setFont(juce::Font(juce::FontOptions(14.0f * s)));
+        std::get<2>(knob)->setFont(juce::Font(juce::FontOptions(14.0f * s)));
+        layoutKnob(*std::get<0>(knob), *std::get<1>(knob), *std::get<2>(knob),
+                   { cellLeft, top + juce::roundToInt(143 * s), cellWidth, juce::roundToInt(68 * s) },
+                   juce::roundToInt(34 * s));
     }
+}
 
-    // Transport: record (tall) / play+cancel / sync.
+void AriaBridgeAudioProcessorEditor::refreshControlValues()
+{
+    using Control = AriaBridgeAudioProcessor::ControlId;
+    for (int index = 0; index < static_cast<int>(Control::record); ++index)
     {
-        auto inner = transportPanel.reduced(juce::roundToInt(12 * s));
-        inner.removeFromTop(juce::roundToInt(16 * s));
-        const int h = inner.getHeight();
-        const int pad = juce::roundToInt(8 * s);
-        recordButton.setBounds(inner.removeFromTop(juce::roundToInt(h * 0.34f)));
-        inner.removeFromTop(pad);
-        auto row = inner.removeFromTop(juce::roundToInt(h * 0.28f));
-        const int halfW = (row.getWidth() - pad) / 2;
-        playButton.setBounds(row.removeFromLeft(halfW));
-        row.removeFromLeft(pad);
-        cancelButton.setBounds(row);
-        inner.removeFromTop(pad);
-        syncButton.setBounds(inner.removeFromTop(juce::jmin(juce::roundToInt(28 * s), inner.getHeight())));
+        const auto control = static_cast<Control>(index);
+        getSliderForControl(control).setValue(audioProcessor.getControlValue(control), juce::dontSendNotification);
+        refreshValueLabel(control);
     }
-
-    // Feedback: grade knob + commit.
-    {
-        auto inner = feedbackPanel.reduced(juce::roundToInt(12 * s));
-        inner.removeFromTop(juce::roundToInt(16 * s));
-        commitButton.setBounds(inner.removeFromBottom(juce::roundToInt(32 * s)));
-        inner.removeFromBottom(juce::roundToInt(8 * s));
-        layoutKnob(gradeSlider, gradeLabel, gradeValueLabel, inner, juce::roundToInt(62 * s));
-    }
-
-    // Playback: vertical bar + label.
-    {
-        auto inner = playbackPanel.reduced(juce::roundToInt(10 * s));
-        inner.removeFromTop(juce::roundToInt(16 * s));
-        progressLabel.setBounds(inner.removeFromBottom(juce::roundToInt(15 * s)));
-        inner.removeFromBottom(juce::roundToInt(3 * s));
-        barRect = inner;
-    }
-
-    // Status strip.
-    {
-        auto sc = statusStrip.reduced(juce::roundToInt(12 * s), juce::roundToInt(6 * s));
-        sc.removeFromLeft(juce::roundToInt(24 * s));   // dot
-        statusLabel.setFont(juce::Font(juce::jmax(12.0f, 14.0f * s), juce::Font::bold));
-        logLabel.setFont(juce::Font(juce::jmax(10.5f, 11.5f * s)));
-        progressLabel.setFont(juce::Font(juce::jmax(9.5f, 10.5f * s)));
-        statusLabel.setBounds(sc.removeFromLeft(juce::roundToInt(sc.getWidth() * 0.38f)));
-        logLabel.setBounds(sc);
-    }
+    for (const auto control : { Control::record, Control::clip, Control::loop, Control::autoFire })
+        getButtonForControl(control).setToggleState(audioProcessor.getControlValue(control) >= 0.5, juce::dontSendNotification);
+    isRecordEnabled = recordButton.getToggleState();
+    repaint();
 }
 
 void AriaBridgeAudioProcessorEditor::refreshStatusDisplay()
@@ -465,14 +390,15 @@ void AriaBridgeAudioProcessorEditor::refreshStatusDisplay()
     isConnected = snapshot.connected;
     const juce::String shown = isConnected ? snapshot.currentStatus : juce::String("DISCONNECTED");
     statusLabel.setText(shown, juce::dontSendNotification);
-    statusLabel.setColour(juce::Label::textColourId, stateColour(shown));
+    statusLabel.setTooltip(shown + "\n" + snapshot.lastLog);
     logLabel.setText(snapshot.lastLog, juce::dontSendNotification);
     repaint();
 }
 
 void AriaBridgeAudioProcessorEditor::applyMappedControlValue(AriaBridgeAudioProcessor::ControlId controlId, double value)
 {
-    getSliderForControl(controlId).setValue(value, juce::sendNotificationSync);
+    getSliderForControl(controlId).setValue(value, juce::dontSendNotification);
+    refreshValueLabel(controlId);
 }
 
 void AriaBridgeAudioProcessorEditor::configureKnob(LearnableSlider& slider,
@@ -483,20 +409,21 @@ void AriaBridgeAudioProcessorEditor::configureKnob(LearnableSlider& slider,
                                                    double defaultValue,
                                                    const juce::String& oscAddress,
                                                    AriaBridgeAudioProcessor::ControlId controlId,
-                                                   juce::Colour accent,
-                                                   bool hero)
+                                                   juce::Colour accent)
 {
     const bool isInt = (interval >= 1.0);
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     slider.setRange(minimum, maximum, interval);
-    slider.setValue(defaultValue, juce::dontSendNotification);
+    slider.setValue(audioProcessor.getControlValue(controlId), juce::dontSendNotification);
+    slider.setDoubleClickReturnValue(true, defaultValue);
+    slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+    slider.setName(name);
     slider.setColour(juce::Slider::rotarySliderFillColourId, accent);
-    if (hero)
-        slider.getProperties().set("hero", true);
-    slider.onValueChange = [this, controlId] { refreshValueLabel(controlId); };
-    slider.onDragEnd = [this, &slider, oscAddress, isInt]
+    slider.onValueChange = [this, &slider, controlId, oscAddress, isInt]
     {
+        audioProcessor.setControlValue(controlId, slider.getValue());
+        refreshValueLabel(controlId);
         if (isInt) audioProcessor.sendOSC(oscAddress, static_cast<int>(slider.getValue()));
         else       audioProcessor.sendOSC(oscAddress, static_cast<float>(slider.getValue()));
     };
@@ -511,6 +438,7 @@ void AriaBridgeAudioProcessorEditor::configureKnob(LearnableSlider& slider,
 void AriaBridgeAudioProcessorEditor::configureActionButton(MidiLearnButton& button, const juce::String& text, juce::Colour accent)
 {
     button.setButtonText(text);
+    button.setName(text);
     button.setColour(juce::TextButton::buttonColourId, accent);
     button.setColour(juce::TextButton::buttonOnColourId, accent);
     addAndMakeVisible(button);
@@ -520,8 +448,10 @@ void AriaBridgeAudioProcessorEditor::configureNameLabel(juce::Label& label, cons
 {
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
-    label.setColour(juce::Label::textColourId, accent.withAlpha(0.92f));
-    label.setFont(juce::Font(11.0f, juce::Font::bold));
+    juce::ignoreUnused(accent);
+    label.setColour(juce::Label::textColourId, ink);
+    label.setBorderSize(juce::BorderSize<int>(0));
+    label.setFont(juce::Font(juce::FontOptions(14.0f)));
     addAndMakeVisible(label);
 }
 
@@ -529,7 +459,8 @@ void AriaBridgeAudioProcessorEditor::configureValueLabel(juce::Label& label)
 {
     label.setJustificationType(juce::Justification::centred);
     label.setColour(juce::Label::textColourId, ink);
-    label.setFont(juce::Font(12.5f, juce::Font::bold));
+    label.setBorderSize(juce::BorderSize<int>(0));
+    label.setFont(juce::Font(juce::FontOptions(14.0f)));
     addAndMakeVisible(label);
 }
 
@@ -570,6 +501,9 @@ LearnableSlider& AriaBridgeAudioProcessorEditor::getSliderForControl(AriaBridgeA
         case AriaBridgeAudioProcessor::ControlId::minP: return minPSlider;
         case AriaBridgeAudioProcessor::ControlId::tokens: return tokensSlider;
         case AriaBridgeAudioProcessor::ControlId::grade: return gradeSlider;
+        case AriaBridgeAudioProcessor::ControlId::track: return trackSlider;
+        case AriaBridgeAudioProcessor::ControlId::slot: return slotSlider;
+        case AriaBridgeAudioProcessor::ControlId::measures: return measuresSlider;
         default: break;
     }
     jassertfalse;
@@ -585,6 +519,9 @@ juce::Label& AriaBridgeAudioProcessorEditor::getValueLabelForControl(AriaBridgeA
         case AriaBridgeAudioProcessor::ControlId::minP: return minPValueLabel;
         case AriaBridgeAudioProcessor::ControlId::tokens: return tokensValueLabel;
         case AriaBridgeAudioProcessor::ControlId::grade: return gradeValueLabel;
+        case AriaBridgeAudioProcessor::ControlId::track: return trackValueLabel;
+        case AriaBridgeAudioProcessor::ControlId::slot: return slotValueLabel;
+        case AriaBridgeAudioProcessor::ControlId::measures: return measuresValueLabel;
         default: break;
     }
     jassertfalse;
@@ -626,6 +563,9 @@ MidiLearnButton& AriaBridgeAudioProcessorEditor::getButtonForControl(AriaBridgeA
         case AriaBridgeAudioProcessor::ControlId::cancel: return cancelButton;
         case AriaBridgeAudioProcessor::ControlId::sync:   return syncButton;
         case AriaBridgeAudioProcessor::ControlId::commit: return commitButton;
+        case AriaBridgeAudioProcessor::ControlId::clip: return clipButton;
+        case AriaBridgeAudioProcessor::ControlId::loop: return loopButton;
+        case AriaBridgeAudioProcessor::ControlId::autoFire: return autoButton;
         default: break;
     }
     jassertfalse;
@@ -640,7 +580,7 @@ void AriaBridgeAudioProcessorEditor::configureStandaloneWindowIfNeeded()
     if (auto* window = dynamic_cast<juce::ResizableWindow*>(getTopLevelComponent()))
     {
         window->setResizable(true, true);
-        window->setResizeLimits(560, 300, 1500, 760);
+        window->setResizeLimits(560, 190, 1500, 500);
         window->setConstrainer(&windowConstrainer);
         standaloneWindowConfigured = true;
     }
@@ -652,8 +592,11 @@ void AriaBridgeAudioProcessorEditor::setGenerationActive(bool active)
     if (active)
     {
         genProgress = 0.0;
-        playbackDisplayed = 0.0;   // bar starts empty and rises with generation
-        progressLabel.setText("GEN 0%", juce::dontSendNotification);
+        if (! isPlaying)
+        {
+            playbackDisplayed = 0.0;
+            progressLabel.setText("GEN 0%", juce::dontSendNotification);
+        }
     }
     else if (! isPlaying)
     {
@@ -663,9 +606,20 @@ void AriaBridgeAudioProcessorEditor::setGenerationActive(bool active)
 
 void AriaBridgeAudioProcessorEditor::setGenerationProgress(float value)
 {
-    isGenerating = true;
-    genProgress = juce::jlimit(0.0, 1.0, static_cast<double>(value));
-    progressLabel.setText("GEN " + juce::String(juce::roundToInt(genProgress * 100.0)) + "%", juce::dontSendNotification);
+    if (value <= 0.0f && ! isGenerating && ! isPlaying)
+    {
+        genProgress = 0.0;
+        return;
+    }
+    // New M4L backends send playback through /generation_progress as well.
+    if (isPlaying)
+        setPlaybackProgress(value);
+    else
+    {
+        isGenerating = true;
+        genProgress = juce::jlimit(0.0, 1.0, static_cast<double>(value));
+        progressLabel.setText("GEN " + juce::String(juce::roundToInt(genProgress * 100.0)) + "%", juce::dontSendNotification);
+    }
 }
 
 void AriaBridgeAudioProcessorEditor::timerCallback()
@@ -673,8 +627,11 @@ void AriaBridgeAudioProcessorEditor::timerCallback()
     phase += 1.0;
 
     // One eased bar value, target driven by whichever phase is active.
-    const double target = isGenerating ? genProgress : (isPlaying ? playbackTarget : 0.0);
+    const double target = clipButton.getToggleState() ? 0.0
+        : (isPlaying ? playbackTarget : (isGenerating ? genProgress : 0.0));
     playbackDisplayed += (target - playbackDisplayed) * 0.25;
+    progressLabel.setTooltip(clipButton.getToggleState() ? "Progress disabled in clip mode"
+                                                       : progressLabel.getText());
 
     // Re-evaluate connection so it clears when the backend goes quiet.
     if (audioProcessor.getOSCStateSnapshot().connected != isConnected)
@@ -686,6 +643,8 @@ void AriaBridgeAudioProcessorEditor::timerCallback()
 void AriaBridgeAudioProcessorEditor::setPlaybackDuration(float seconds)
 {
     playbackTotalDuration = static_cast<double>(seconds);
+    isPlaying = true;
+    playbackTarget = 0.0;
 }
 
 void AriaBridgeAudioProcessorEditor::setPlaybackProgress(float value)

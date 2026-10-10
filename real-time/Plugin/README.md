@@ -23,7 +23,7 @@ On Windows, install:
 JUCE is fetched automatically by CMake from:
 
 - `https://github.com/juce-framework/JUCE.git`
-- tag `7.0.9`
+- tag `8.0.7`
 
 ## Project Layout
 
@@ -150,6 +150,30 @@ cmake --build real-time/Plugin/build --config Release
 3. Run the standalone app, or load the VST3 in a DAW.
 
 ## Notes
+
+The editor matches the compact Ableton device layout: square Record / Clip / Loop / Auto toggles,
+circular Play / Cancel / Sync / Commit actions, eight cyan arc knobs, and a shared vertical
+generation / playback progress slider. Clip output disables the progress display; playback takes
+priority while another take generates in the background.
+
+Track and Slot use Ableton's zero-based indices from 0 to 10. Measures ranges from 0 to 60,
+where 0 keeps the full clip. Auto sends `/aria/fire` to launch a clip after writing it. Enabling Loop
+also enables its required Clip output; disabling Clip turns Loop off. Sync sends all knob values
+and the Clip / Loop / Auto states. Right-click any knob or button for MIDI Learn.
+
+Control values and MIDI mappings are saved with the project and retained when reopening the editor.
+Existing version 1 MIDI mappings are migrated to the same controls.
+
+To run the Windows control regressions, stop the backend and close other bridge instances so UDP ports 9000 and 9001 are free:
+
+```powershell
+cmake -S real-time/Plugin -B real-time/Plugin/build -DARIA_BUILD_TESTS=ON
+cmake --build real-time/Plugin/build --config Release --target AriaBridgeControlTests
+ctest --test-dir real-time/Plugin/build -C Release --output-on-failure
+```
+
+Pass an absolute output directory to `build/Release/AriaBridgeControlTests.exe` to also generate
+PNG previews at the minimum, reference, enlarged, and tall window sizes.
 
 - The plugin currently supports:
   - `VST3`

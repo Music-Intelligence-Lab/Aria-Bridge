@@ -38,8 +38,7 @@ public:
     }
 };
 
-// Valhalla-descended look: near-black canvas, flat indicator-line knobs whose accent is read
-// per-slider from rotarySliderFillColourId, plus a "hero" property for the big filled knob.
+// Ableton-style controls: thin cyan knob arcs, square toggles and circular actions.
 class AriaLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
@@ -76,6 +75,7 @@ public:
     void parentHierarchyChanged() override;
     void resized() override;
     void refreshStatusDisplay();
+    void refreshControlValues();
     void applyMappedControlValue(AriaBridgeAudioProcessor::ControlId controlId, double value);
     void applyMidiButtonTrigger(AriaBridgeAudioProcessor::ControlId buttonId);
     void setGenerationActive(bool active);
@@ -95,8 +95,7 @@ private:
                        double defaultValue,
                        const juce::String& oscAddress,
                        AriaBridgeAudioProcessor::ControlId controlId,
-                       juce::Colour accent,
-                       bool hero);
+                       juce::Colour accent);
 
     void configureActionButton(MidiLearnButton& button, const juce::String& text, juce::Colour accent);
     void configureNameLabel(juce::Label& label, const juce::String& text, juce::Colour accent);
@@ -110,7 +109,6 @@ private:
     void configureStandaloneWindowIfNeeded();
     void layoutKnob(LearnableSlider& slider, juce::Label& nameLabel, juce::Label& valueLabel,
                     juce::Rectangle<int> cell, int knobSize);
-    void drawPanel(juce::Graphics& g, juce::Rectangle<int> r, juce::Colour accent, const juce::String& head);
     void timerCallback() override;
 
     AriaBridgeAudioProcessor& audioProcessor;
@@ -120,37 +118,46 @@ private:
     LearnableSlider minPSlider;
     LearnableSlider tokensSlider;
     LearnableSlider gradeSlider;
+    LearnableSlider trackSlider;
+    LearnableSlider slotSlider;
+    LearnableSlider measuresSlider;
 
     juce::Label tempLabel;
     juce::Label topPLabel;
     juce::Label minPLabel;
     juce::Label tokensLabel;
     juce::Label gradeLabel;
+    juce::Label trackLabel;
+    juce::Label slotLabel;
+    juce::Label measuresLabel;
 
     juce::Label tempValueLabel;
     juce::Label topPValueLabel;
     juce::Label minPValueLabel;
     juce::Label tokensValueLabel;
     juce::Label gradeValueLabel;
+    juce::Label trackValueLabel;
+    juce::Label slotValueLabel;
+    juce::Label measuresValueLabel;
 
     MidiLearnButton recordButton;
     MidiLearnButton playButton;
     MidiLearnButton cancelButton;
     MidiLearnButton syncButton;
     MidiLearnButton commitButton;
+    MidiLearnButton clipButton;
+    MidiLearnButton loopButton;
+    MidiLearnButton autoButton;
 
     juce::Label statusLabel;
     juce::Label logLabel;
     juce::Label progressLabel;
 
-    // Panel rectangles (computed in resized, drawn in paint).
-    juce::Rectangle<int> samplingPanel, transportPanel, feedbackPanel, playbackPanel, barRect, statusStrip;
+    juce::Rectangle<int> headerRect, barRect;
 
     // Animation / live state.
     double phase = 0.0;
     bool isGenerating = false;
-    double genStartMs = 0.0;
-    int generationElapsedSec = 0;
     double playbackTarget = 0.0;
     double playbackDisplayed = 0.0;
     double playbackTotalDuration = 0.0;
@@ -163,4 +170,5 @@ private:
     bool isRecordEnabled = false;
     bool isConnected = false;
     bool isPlaying = false;
+    juce::TooltipWindow tooltipWindow { this, 700 };
 };
