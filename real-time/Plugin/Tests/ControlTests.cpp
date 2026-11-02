@@ -51,7 +51,7 @@ void backendMessage(const char* address, const char* type, float value = 0.0f)
         packet.writeIntBigEndian(bits);
     }
     juce::DatagramSocket sender(false);
-    sender.write("127.0.0.1", 9001, packet.getData(), static_cast<int>(packet.getDataSize()));
+    sender.write("127.0.0.1", 19001, packet.getData(), static_cast<int>(packet.getDataSize()));
     pumpMessages();
 }
 
@@ -129,13 +129,13 @@ int main(int argc, char** argv)
     try
     {
         juce::DatagramSocket receiver(false);
-        require(receiver.bindToPort(9000), "Control tests need port 9000 free (backend must be stopped)");
-        AriaBridgeAudioProcessor processor;
+        require(receiver.bindToPort(19000), "Control tests need port 19000 free (backend must be stopped)");
+        AriaBridgeAudioProcessor processor(19000, 19001);
         std::unique_ptr<AriaBridgeAudioProcessorEditor> editor(
             static_cast<AriaBridgeAudioProcessorEditor*>(processor.createEditor()));
         pumpMessages();
         require(! processor.getOSCStateSnapshot().lastLog.contains("Failed to bind"),
-                "Control tests need port 9001 free (close other bridge instances)");
+                "Control tests need port 19001 free (close other bridge instances)");
         drainAddresses(receiver);
 
         // The Max device's new destination and length controls must reach the backend.
@@ -183,7 +183,7 @@ int main(int argc, char** argv)
         require(buttonNamed(*editor, "auto").getToggleState(), "Low-valued CC release toggled Auto again");
 
         // Playback and generation share the M4L progress address. Playback wins
-        // over a background generation start, and clip output disables the slider.
+        // over a background generation start, including in clip mode.
         backendMessage("/playback_duration", ",f", 10.0f);
         backendMessage("/generation_progress", ",i", 50.0f);
         const auto halfProgress = progressPixels(*editor);
@@ -192,9 +192,30 @@ int main(int argc, char** argv)
         require(progressPixels(*editor) >= halfProgress, "Background generation reset the playback slider");
         backendMessage("/generation_progress", ",f", 75.0f);
         require(progressPixels(*editor) > halfProgress, "Float progress updates were ignored");
+        editor.reset();
+        backendMessage("/generation_progress", ",i", 80.0f);
+        editor.reset(static_cast<AriaBridgeAudioProcessorEditor*>(processor.createEditor()));
+        pumpMessages();
+        require(progressPixels(*editor) > halfProgress, "Reopening the editor lost active playback progress");
+        require(processor.getProgressStateSnapshot().duration == 10.0, "Reopening lost playback duration");
         buttonNamed(*editor, "clip").triggerClick();
         pumpMessages();
-        require(progressPixels(*editor) < 10, "Clip output must disable the progress slider");
+        require(progressPixels(*editor) > halfProgress, "Clip output disabled the progress slider");
+        backendMessage("/playback_duration", ",f", 8.0f);
+        backendMessage("/generation_progress", ",i", 25.0f);
+        require(progressPixels(*editor) < halfProgress, "New clip did not reset playback progress");
+        backendMessage("/generation_done", ",");
+        backendMessage("/playback_stopped", ",");
+        backendMessage("/generation_start", ",");
+        backendMessage("/generation_progress", ",i", 50.0f);
+        require(progressPixels(*editor) > 50, "Clip generation progress did not move the slider");
+        editor.reset();
+        backendMessage("/generation_done", ",");
+        backendMessage("/generation_start", ",");
+        backendMessage("/generation_progress", ",i", 60.0f);
+        editor.reset(static_cast<AriaBridgeAudioProcessorEditor*>(processor.createEditor()));
+        pumpMessages();
+        require(progressPixels(*editor) > 50, "Generation progress was lost while editor was closed");
         buttonNamed(*editor, "clip").triggerClick();
         pumpMessages();
         backendMessage("/generation_done", ",");
@@ -261,6 +282,12 @@ int main(int argc, char** argv)
             snapshot(*editor, folder, "aria-vst-minimum.png", 560, 190);
             snapshot(*editor, folder, "aria-vst-large.png", 1320, 440);
             snapshot(*editor, folder, "aria-vst-tall.png", 660, 500);
+            editor->applyProgressState({ false, true, 0.0, 0.5, 40.0, 1 });
+            pumpMessages();
+            snapshot(*editor, folder, "aria-vst-playback.png", 660, 220);
+            editor->applyProgressState({ true, false, 0.5, 0.0, 0.0, 1 });
+            pumpMessages();
+            snapshot(*editor, folder, "aria-vst-generation.png", 660, 220);
         }
         std::cout << "PASS: Ableton controls, OSC routing, MIDI press/release, shared progress, state restoration, legacy mappings, resizing\n";
         editor.reset();

@@ -169,8 +169,6 @@ AriaBridgeAudioProcessorEditor::AriaBridgeAudioProcessorEditor(AriaBridgeAudioPr
             audioProcessor.setControlValue(Control::loop, 0.0);
             audioProcessor.sendOSC("/aria/loop", 0);
         }
-        // The backend disables the shared progress slider while writing clips.
-        playbackDisplayed = 0.0;
         repaint();
     };
     loopButton.onClick = [this]
@@ -211,8 +209,7 @@ AriaBridgeAudioProcessorEditor::AriaBridgeAudioProcessorEditor(AriaBridgeAudioPr
     {
         audioProcessor.sendOSC("/aria/cancel");
         audioProcessor.sendOSC("/cancel_playback");
-        setGenerationActive(false);
-        stopPlayback();
+        audioProcessor.resetProgressState();
         recordButton.setToggleState(false, juce::dontSendNotification);
         audioProcessor.setControlValue(Control::record, 0.0);
         isRecordEnabled = false;
@@ -229,7 +226,8 @@ AriaBridgeAudioProcessorEditor::AriaBridgeAudioProcessorEditor(AriaBridgeAudioPr
     statusLabel.setColour(juce::Label::textColourId, juce::Colours::transparentBlack);
     addAndMakeVisible(statusLabel);
     logLabel.setVisible(false);
-    progressLabel.setColour(juce::Label::textColourId, juce::Colours::transparentBlack);
+    progressLabel.setColour(juce::Label::textColourId, ink);
+    progressLabel.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(progressLabel);
 
     setResizable(true, false);
@@ -268,21 +266,20 @@ void AriaBridgeAudioProcessorEditor::paint(juce::Graphics& g)
     g.fillEllipse(headerRect.getRight() - 12.0f * s, headerRect.getCentreY() - dot * 0.5f, dot, dot);
 
     const auto bar = barRect.toFloat();
-    const bool clipMode = clipButton.getToggleState();
     g.setColour(buttonDark);
     g.fillRect(bar);
-    const float progress = clipMode ? 0.0f : (float) juce::jlimit(0.0, 1.0, playbackDisplayed);
+    const float progress = (float) juce::jlimit(0.0, 1.0, playbackDisplayed);
     const float fillHeight = progress * bar.getHeight();
     if (fillHeight > 0.0f)
     {
-        g.setColour(progressGreen.withAlpha(clipMode ? 0.25f : 1.0f));
+        g.setColour(progressGreen);
         g.fillRect(bar.withTop(bar.getBottom() - fillHeight));
     }
-    g.setColour(progressGreen.withAlpha(clipMode ? 0.25f : 1.0f));
+    g.setColour(progressGreen);
     g.fillRect(bar.withTop(bar.getBottom() - 5.0f * s).reduced(1.0f * s, 0.0f));
     const float handleSize = bar.getWidth() * 0.76f;
     const float handleY = bar.getY() + 6.0f * s + progress * (bar.getHeight() - handleSize - 12.0f * s);
-    g.setColour(clipMode ? knobDark.withAlpha(0.45f) : knobDark);
+    g.setColour(knobDark);
     g.fillEllipse(bar.getCentreX() - handleSize * 0.5f, handleY, handleSize, handleSize);
 
     using Control = AriaBridgeAudioProcessor::ControlId;
@@ -339,6 +336,7 @@ void AriaBridgeAudioProcessorEditor::resized()
                    controlsWidth - juce::roundToInt(60 * s), juce::roundToInt(28 * s) };
     statusLabel.setBounds(headerRect);
     progressLabel.setBounds(barRect);
+    progressLabel.setFont(juce::Font(juce::FontOptions(9.0f * s)));
 
     std::array<MidiLearnButton*, 8> buttons {{
         &recordButton, &clipButton, &loopButton, &autoButton, &playButton, &cancelButton, &syncButton, &commitButton
@@ -586,80 +584,36 @@ void AriaBridgeAudioProcessorEditor::configureStandaloneWindowIfNeeded()
     }
 }
 
-void AriaBridgeAudioProcessorEditor::setGenerationActive(bool active)
+void AriaBridgeAudioProcessorEditor::applyProgressState(const AriaBridgeAudioProcessor::ProgressStateSnapshot& state)
 {
-    isGenerating = active;
-    if (active)
+    isGenerating = state.generating;
+    isPlaying = state.playing;
+    genProgress = state.generation;
+    playbackTarget = state.playback;
+    playbackTotalDuration = state.duration;
+    if (progressIteration != state.iteration)
     {
-        genProgress = 0.0;
-        if (! isPlaying)
-        {
-            playbackDisplayed = 0.0;
-            progressLabel.setText("GEN 0%", juce::dontSendNotification);
-        }
+        progressIteration = state.iteration;
+        playbackDisplayed = 0.0;
     }
-    else if (! isPlaying)
-    {
-        progressLabel.setText({}, juce::dontSendNotification);
-    }
-}
-
-void AriaBridgeAudioProcessorEditor::setGenerationProgress(float value)
-{
-    if (value <= 0.0f && ! isGenerating && ! isPlaying)
-    {
-        genProgress = 0.0;
-        return;
-    }
-    // New M4L backends send playback through /generation_progress as well.
     if (isPlaying)
-        setPlaybackProgress(value);
-    else
     {
-        isGenerating = true;
-        genProgress = juce::jlimit(0.0, 1.0, static_cast<double>(value));
-        progressLabel.setText("GEN " + juce::String(juce::roundToInt(genProgress * 100.0)) + "%", juce::dontSendNotification);
+        const double remaining = playbackTotalDuration * (1.0 - playbackTarget);
+        progressLabel.setText(formatClock(juce::roundToInt(remaining)) + " left", juce::dontSendNotification);
     }
+    else if (isGenerating)
+        progressLabel.setText("GEN " + juce::String(juce::roundToInt(genProgress * 100.0)) + "%", juce::dontSendNotification);
+    else
+        progressLabel.setText({}, juce::dontSendNotification);
 }
 
 void AriaBridgeAudioProcessorEditor::timerCallback()
 {
     phase += 1.0;
-
-    // One eased bar value, target driven by whichever phase is active.
-    const double target = clipButton.getToggleState() ? 0.0
-        : (isPlaying ? playbackTarget : (isGenerating ? genProgress : 0.0));
+    const double target = isPlaying ? playbackTarget : (isGenerating ? genProgress : 0.0);
     playbackDisplayed += (target - playbackDisplayed) * 0.25;
-    progressLabel.setTooltip(clipButton.getToggleState() ? "Progress disabled in clip mode"
-                                                       : progressLabel.getText());
-
-    // Re-evaluate connection so it clears when the backend goes quiet.
+    progressLabel.setTooltip(progressLabel.getText());
     if (audioProcessor.getOSCStateSnapshot().connected != isConnected)
         refreshStatusDisplay();
-
     repaint();
-}
-
-void AriaBridgeAudioProcessorEditor::setPlaybackDuration(float seconds)
-{
-    playbackTotalDuration = static_cast<double>(seconds);
-    isPlaying = true;
-    playbackTarget = 0.0;
-}
-
-void AriaBridgeAudioProcessorEditor::setPlaybackProgress(float value)
-{
-    isPlaying = true;
-    isGenerating = false;
-    playbackTarget = juce::jlimit(0.0, 1.0, static_cast<double>(value));
-    const double remaining = playbackTotalDuration * (1.0 - playbackTarget);
-    progressLabel.setText(formatClock(juce::roundToInt(remaining)) + " left", juce::dontSendNotification);
-}
-
-void AriaBridgeAudioProcessorEditor::stopPlayback()
-{
-    isPlaying = false;
-    playbackTarget = 0.0;
-    if (! isGenerating)
-        progressLabel.setText({}, juce::dontSendNotification);
 }

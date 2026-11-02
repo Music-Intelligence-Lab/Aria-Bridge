@@ -826,7 +826,7 @@ def main():
                 capture_dir=str(capture_dir) if capture_dir else None,
             )
             if osc:
-                osc.cancel_playback_cb = session.playback_cancel_event.set
+                osc.cancel_playback_cb = session.cancel_playback
                 osc.generation_cancel_cb = session.generation_cancel_event.set
                 # If clip/loop was enabled on the CLI, the CLI is authoritative: don't wire
                 # the M4L /aria/clip toggle, so a default-off toggle (e.g. blasted by the
@@ -840,6 +840,7 @@ def main():
                 osc.set_fire_cb = session.set_clip_fire
                 osc.set_measures_cb = session.set_clip_measures
                 osc.set_record_clip_cb = session.set_record_clip
+                osc.play_clip_cb = session.request_clip_play
             if args.ui:
                 run_ui = _load_run_ui()
                 session_thread = threading.Thread(target=session.run, daemon=True)

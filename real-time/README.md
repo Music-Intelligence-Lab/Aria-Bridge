@@ -180,7 +180,7 @@ clip** via [AbletonOSC](https://github.com/ideoforms/AbletonOSC) — so Ableton'
 **Setup:** install AbletonOSC and add it as a Control Surface (Preferences → MIDI), with **Input = None,
 Output = None** (it speaks OSC on UDP 11000/11001, not MIDI).
 
-**Clip output** — write each generation into a clip on PLAY:
+**Clip output** — write each generation into a clip when generation finishes:
 
 ```bash
 python ableton_bridge.py m4l --checkpoint <path> --clip --track 0 --slot 0
@@ -190,6 +190,12 @@ Clips are named `Output 1`, `Output 2`, … and end on a downbeat. Add `--clip-a
 next empty slot, `--clip-tempo` to set Live's tempo to the generated tempo. The **prompt/input** for each
 generation is also written to the track **directly before** the output track (`clip_track - 1`), same
 slot — so you get the input and its continuation side by side (skipped if the output is on track 0).
+With native recording enabled (the default in clip mode), Ableton saves your live input once;
+the bridge leaves that recorded clip intact.
+In clip mode, Record mutes the existing output track while you play. Auto unmutes it and launches
+the generated clip when it is ready. With Auto off, the track stays muted until you press Play.
+Play unmutes the output track and launches the saved clip at the currently selected Slot, even
+after the temporary generation file is gone or while loop generation is running.
 
 **Infinite loop** — seed once, then feed each output back as the next prompt, stacking clips down the
 column (you launch them in Ableton; Cancel stops):
@@ -200,6 +206,10 @@ python ableton_bridge.py m4l --checkpoint <path> --loop --track 0 --slot 0
 
 With **fire-on-write** on (`/aria/fire 1`), clips play sequentially — each fires after the previous ends
 (set Live's Global Launch Quantization to **1 Bar**).
+Generation continues immediately from each finished output, independently of playback. Only the
+original live input is saved on the input track; generated continuations stack on the output track.
+The progress bar shows generation progress while waiting for playback, then time remaining for
+each playing clip/pass, including repeats while the next generation is still running.
 
 ---
 

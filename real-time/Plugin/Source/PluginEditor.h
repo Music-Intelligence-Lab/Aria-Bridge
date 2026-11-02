@@ -78,11 +78,7 @@ public:
     void refreshControlValues();
     void applyMappedControlValue(AriaBridgeAudioProcessor::ControlId controlId, double value);
     void applyMidiButtonTrigger(AriaBridgeAudioProcessor::ControlId buttonId);
-    void setGenerationActive(bool active);
-    void setPlaybackDuration(float seconds);
-    void setPlaybackProgress(float value);
-    void setGenerationProgress(float value);
-    void stopPlayback();
+    void applyProgressState(const AriaBridgeAudioProcessor::ProgressStateSnapshot&);
 
 private:
     void configureKnob(LearnableSlider& slider,
@@ -162,6 +158,7 @@ private:
     double playbackDisplayed = 0.0;
     double playbackTotalDuration = 0.0;
     double genProgress = 0.0;
+    juce::uint64 progressIteration = 0;
     float uiScale = 1.0f;
 
     AriaLookAndFeel lookAndFeel;

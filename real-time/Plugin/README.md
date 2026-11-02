@@ -153,8 +153,9 @@ cmake --build real-time/Plugin/build --config Release
 
 The editor matches the compact Ableton device layout: square Record / Clip / Loop / Auto toggles,
 circular Play / Cancel / Sync / Commit actions, eight cyan arc knobs, and a shared vertical
-generation / playback progress slider. Clip output disables the progress display; playback takes
-priority while another take generates in the background.
+generation / playback progress slider. Progress works in clip and streamed MIDI modes, including
+each loop pass. Playback shows time remaining and takes priority while the next take generates.
+Progress state survives closing and reopening the editor.
 
 Track and Slot use Ableton's zero-based indices from 0 to 10. Measures ranges from 0 to 60,
 where 0 keeps the full clip. Auto sends `/aria/fire` to launch a clip after writing it. Enabling Loop

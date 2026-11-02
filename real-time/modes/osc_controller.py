@@ -31,10 +31,11 @@ class OscController:
         self.grade_cb = grade_cb
         self.feedback_param_cb = feedback_param_cb
         self.cancel_playback_cb = None
+        self.play_clip_cb = None
         self.generation_cancel_cb = None
         # Shared M4L progress slider (obj-84, fed via /generation_progress, 0..100): generation
-        # and playback drive the SAME slider. It is disabled while clip output is on, and playback
-        # takes priority over generation (a variant prefetch generating while a take plays shows the
+        # and playback drive the SAME slider. Playback takes priority over generation
+        # (a variant prefetch generating while a take plays shows the
         # playing take, not the background generation).
         self.clip_enabled = False
         self.playback_active = False
@@ -296,16 +297,13 @@ class OscController:
             logger.debug("Failed to send /generation_done")
 
     def send_generation_progress(self, value: float):
-        # Generation drives the shared slider only when nothing is playing and clip output is off
-        # (playback has priority; the slider is disabled in clip mode).
-        if self.clip_enabled or self.playback_active:
+        # Playback has priority, including clips playing in Ableton.
+        if self.playback_active:
             return
         self._send_slider(value)
 
     def send_playback_progress(self, value: float):
-        # Playback owns the shared slider whenever clip output is off.
-        if self.clip_enabled:
-            return
+        # The duration callback marks the start of each new take/clip.
         self._send_slider(value)
 
     def send_playback_stopped(self):
@@ -316,8 +314,7 @@ class OscController:
             self.client.send_message("/playback_stopped", [])
         except Exception:
             logger.debug("Failed to send /playback_stopped")
-        if not self.clip_enabled:
-            self._send_slider(0.0)  # empty the shared slider when a take finishes
+        self._send_slider(0.0)  # empty the shared slider when a take finishes
 
     @staticmethod
     def _coerce_flag(val):
@@ -395,7 +392,7 @@ class OscController:
             return
         logger.info(f"[OSC] clip -> {flag}")
         print(f"STATUS:param:clip:{flag}", flush=True)
-        self.clip_enabled = bool(flag)  # gate the shared progress slider (off in clip mode)
+        self.clip_enabled = bool(flag)
         if self.set_clip_cb:
             self.set_clip_cb(flag)
 
@@ -475,6 +472,9 @@ class OscController:
 
     def _handle_play(self, addr, *args):
         logger.info("[OSC] play -> SEND OUTPUT")
+        # Clip playback must remain responsive while the session is generating.
+        if self.play_clip_cb and self.play_clip_cb():
+            return
         self.command_queue.put(("play", None))
         self.send_log("Play requested (OSC)")
 

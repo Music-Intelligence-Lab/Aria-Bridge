@@ -20,6 +20,13 @@ RECV_PORT = 11001
 NOTES_PER_MSG = 40  # keep each /live/clip/add/notes packet under the UDP limit
 
 
+def set_track_mute(host=DEFAULT_HOST, port=DEFAULT_PORT, track=0, muted=True):
+    """Set the output track's mute without opening an OSC reply listener."""
+    from pythonosc import udp_client
+    udp_client.SimpleUDPClient(host, port).send_message(
+        "/live/track/set/mute", [int(track), int(bool(muted))])
+
+
 def find_first_empty_slot(host, port, track, start_slot, recv_port=RECV_PORT,
                           max_scan=128, timeout=0.4):
     """Ask AbletonOSC for the first empty clip slot at/below ``start_slot``.
@@ -321,6 +328,18 @@ class AbletonOSCClient:
                 return None
         return None
 
+    def get_clip_loop_length(self, track, slot):
+        """Read the selected clip's loop region, in beats."""
+        start = self.query("/live/clip/get/loop_start", [int(track), int(slot)])
+        end = self.query("/live/clip/get/loop_end", [int(track), int(slot)])
+        if start and end:
+            try:
+                length = float(end[-1]) - float(start[-1])
+                return length if length > 0 else None
+            except (ValueError, TypeError):
+                pass
+        return None
+
     def write_clip(self, midi_path, track, slot, name=None, beats_per_bar=4,
                    set_tempo=False, replace=True, fire=False, measures_out=0):
         """Write a .mid into (track, slot). Send-only (uses this client's socket).
@@ -356,8 +375,9 @@ class AbletonOSCClient:
         if self.server:
             try:
                 self.server.shutdown()
-            except Exception:
-                pass
+            finally:
+                self.server.server_close()
+                self.server = None
 
 
 def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAULT_PORT,

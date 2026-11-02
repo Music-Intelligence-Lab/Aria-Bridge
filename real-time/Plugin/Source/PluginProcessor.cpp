@@ -6,8 +6,6 @@
 
 namespace
 {
-constexpr int oscSendPort = 9000;
-constexpr int oscReceivePort = 9001;
 constexpr const char* oscHost = "127.0.0.1";
 constexpr int maxOscPacketSize = 2048;
 constexpr auto controlCount = static_cast<int>(AriaBridgeAudioProcessor::ControlId::count);
@@ -212,11 +210,11 @@ public:
     {
         juce::DatagramSocket socket(false);
 
-        if (! socket.bindToPort(oscReceivePort))
+        if (! socket.bindToPort(owner.oscReceivePort))
         {
             {
                 const juce::ScopedLock lock(owner.oscStateLock);
-                owner.lastLog = "Failed to bind UDP receive socket on port 9001";
+                owner.lastLog = "Failed to bind UDP receive socket on port " + juce::String(owner.oscReceivePort);
             }
 
             owner.triggerAsyncUpdate();
@@ -243,9 +241,9 @@ private:
     AriaBridgeAudioProcessor& owner;
 };
 
-AriaBridgeAudioProcessor::AriaBridgeAudioProcessor()
+AriaBridgeAudioProcessor::AriaBridgeAudioProcessor(int sendPort, int receivePort)
     : AudioProcessor(BusesProperties()),
-      oscSenderSocket(false)
+      oscSendPort(sendPort), oscReceivePort(receivePort), oscSenderSocket(false)
 {
     midiMappings.fill(-1);
     pendingMidiValues.fill(0.0);
@@ -583,6 +581,7 @@ void AriaBridgeAudioProcessor::handleAsyncUpdate()
     {
         activeEditor->refreshControlValues();
         activeEditor->refreshStatusDisplay();
+        activeEditor->applyProgressState(getProgressStateSnapshot());
         activeEditor->repaint();
     }
 }
@@ -666,88 +665,73 @@ void AriaBridgeAudioProcessor::handleIncomingOSCMessage(const void* data, size_t
         return;
     }
 
-    if (address == "/generation_start" && typeTags == ",")
+    // Keep progress in the processor so closing/reopening the editor cannot lose
+    // duration or leave it interpreting playback updates as generation percentages.
+    bool progressChanged = false;
     {
-        juce::MessageManager::callAsync([this]
+        const juce::ScopedLock lock(oscStateLock);
+        if (address == "/generation_start" && typeTags == ",")
         {
-            if (activeEditor != nullptr)
-                activeEditor->setGenerationActive(true);
-        });
-        return;
-    }
-
-    if (address == "/generation_done" && typeTags == ",")
-    {
-        juce::MessageManager::callAsync([this]
-        {
-            if (activeEditor != nullptr)
-                activeEditor->setGenerationActive(false);
-        });
-        return;
-    }
-
-    if (address == "/generation_progress" && (typeTags == ",i" || typeTags == ",f"))
-    {
-        int percent = 0;
-        float floatPercent = 0.0f;
-
-        const bool valid = typeTags == ",i" ? readInt32(bytes, sizeInBytes, offset, percent)
-            : readFloat32(bytes, sizeInBytes, offset, floatPercent);
-        if (valid)
-        {
-            if (typeTags == ",f")
-                percent = juce::roundToInt(floatPercent);
-            juce::MessageManager::callAsync([this, percent]
-            {
-                if (activeEditor != nullptr)
-                    activeEditor->setGenerationProgress(static_cast<float>(percent) / 100.0f);
-            });
+            progressState.generating = true;
+            progressState.generation = 0.0;
+            progressChanged = true;
         }
-
-        return;
-    }
-
-    if (address == "/playback_progress" && typeTags == ",f")
-    {
-        float progressValue = 0.0f;
-
-        if (readFloat32(bytes, sizeInBytes, offset, progressValue))
+        else if (address == "/generation_done" && typeTags == ",")
         {
-            juce::MessageManager::callAsync([this, progressValue]
-            {
-                if (activeEditor != nullptr)
-                    activeEditor->setPlaybackProgress(progressValue);
-            });
+            progressState.generating = false;
+            progressChanged = true;
         }
-
-        return;
-    }
-
-    if (address == "/playback_duration" && typeTags == ",f")
-    {
-        float durationValue = 0.0f;
-
-        if (readFloat32(bytes, sizeInBytes, offset, durationValue))
+        else if (address == "/generation_progress" && (typeTags == ",i" || typeTags == ",f"))
         {
-            juce::MessageManager::callAsync([this, durationValue]
+            int percent = 0;
+            float value = 0.0f;
+            const bool valid = typeTags == ",i" ? readInt32(bytes, sizeInBytes, offset, percent)
+                : readFloat32(bytes, sizeInBytes, offset, value);
+            if (valid)
             {
-                if (activeEditor != nullptr)
-                    activeEditor->setPlaybackDuration(durationValue);
-            });
+                const auto fraction = juce::jlimit(0.0, 1.0, (typeTags == ",i" ? percent : value) / 100.0);
+                if (progressState.playing)
+                    progressState.playback = fraction;
+                else
+                {
+                    progressState.generation = fraction;
+                    if (fraction > 0.0)
+                        progressState.generating = true;
+                }
+                progressChanged = true;
+            }
         }
-
-        return;
-    }
-
-    if (address == "/playback_stopped" && typeTags == ",")
-    {
-        juce::MessageManager::callAsync([this]
+        else if (address == "/playback_progress" && typeTags == ",f")
         {
-            if (activeEditor != nullptr)
-                activeEditor->stopPlayback();
-        });
-        return;
+            float value = 0.0f;
+            if (readFloat32(bytes, sizeInBytes, offset, value))
+            {
+                progressState.playing = true;
+                progressState.playback = juce::jlimit(0.0, 1.0, static_cast<double>(value));
+                progressChanged = true;
+            }
+        }
+        else if (address == "/playback_duration" && typeTags == ",f")
+        {
+            float value = 0.0f;
+            if (readFloat32(bytes, sizeInBytes, offset, value))
+            {
+                progressState.playing = true;
+                progressState.duration = value;
+                progressState.playback = 0.0;
+                ++progressState.iteration;
+                progressChanged = true;
+            }
+        }
+        else if (address == "/playback_stopped" && typeTags == ",")
+        {
+            progressState.playing = false;
+            progressState.playback = 0.0;
+            progressChanged = true;
+        }
     }
+    if (progressChanged)
+        triggerAsyncUpdate();
 }
 
 void AriaBridgeAudioProcessor::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message)
@@ -877,9 +861,26 @@ void AriaBridgeAudioProcessor::stopStandaloneMidiInputs()
     standaloneMidiInputs.clear();
 }
 
+AriaBridgeAudioProcessor::ProgressStateSnapshot AriaBridgeAudioProcessor::getProgressStateSnapshot() const
+{
+    const juce::ScopedLock lock(oscStateLock);
+    return progressState;
+}
+
+void AriaBridgeAudioProcessor::resetProgressState()
+{
+    {
+        const juce::ScopedLock lock(oscStateLock);
+        progressState = {};
+    }
+    triggerAsyncUpdate();
+}
+
 void AriaBridgeAudioProcessor::setEditor(AriaBridgeAudioProcessorEditor* editorToUse)
 {
     activeEditor = editorToUse;
+    if (activeEditor != nullptr)
+        activeEditor->applyProgressState(getProgressStateSnapshot());
 }
 
 void AriaBridgeAudioProcessor::clearEditor(AriaBridgeAudioProcessorEditor* editorToClear)

@@ -43,7 +43,17 @@ public:
         bool connected = false;
     };
 
-    AriaBridgeAudioProcessor();
+    struct ProgressStateSnapshot
+    {
+        bool generating = false;
+        bool playing = false;
+        double generation = 0.0;
+        double playback = 0.0;
+        double duration = 0.0;
+        juce::uint64 iteration = 0;
+    };
+
+    explicit AriaBridgeAudioProcessor(int sendPort = 9000, int receivePort = 9001);
     ~AriaBridgeAudioProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
@@ -86,6 +96,8 @@ public:
     void setControlValue(ControlId controlId, double value);
 
     OSCStateSnapshot getOSCStateSnapshot() const;
+    ProgressStateSnapshot getProgressStateSnapshot() const;
+    void resetProgressState();
     void setEditor(AriaBridgeAudioProcessorEditor* editorToUse);
     void clearEditor(AriaBridgeAudioProcessorEditor* editorToClear);
 
@@ -109,6 +121,9 @@ private:
     float temp = 0.0f;
     float topP = 0.0f;
     float minP = 0.0f;
+    ProgressStateSnapshot progressState;
+    const int oscSendPort;
+    const int oscReceivePort;
 
     std::array<int, static_cast<int>(ControlId::count)> midiMappings {};
     std::array<double, static_cast<int>(ControlId::count)> pendingMidiValues {};
