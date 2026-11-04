@@ -32,6 +32,7 @@ class OscController:
         self.feedback_param_cb = feedback_param_cb
         self.cancel_playback_cb = None
         self.play_clip_cb = None
+        self.record_start_cb = None
         self.generation_cancel_cb = None
         # Shared M4L progress slider (obj-84, fed via /generation_progress, 0..100): generation
         # and playback drive the SAME slider. Playback takes priority over generation
@@ -372,6 +373,8 @@ class OscController:
         if level == 1:
             logger.info("[OSC] record=1 -> START")
             self.command_queue.put(("record_start", None))
+            if self.record_start_cb:
+                self.record_start_cb()
             self.send_log("Record start requested (OSC)")
         else:
             logger.info("[OSC] record=0 -> STOP+GENERATE")

@@ -121,6 +121,7 @@ You should see `OSC server listening on 127.0.0.1:9000`. The M4L device status w
 |---------|--------|
 | **Record** | Start/stop capturing MIDI input |
 | **Play** | Send generated MIDI to `ARIA_OUT` |
+| **Auto** | Play the output as soon as generation finishes. With Clip on, launch the written clip |
 | **Cancel** | Stops whatever is active: cancels recording, interrupts generation mid-way, stops playback, or discards a pending output and returns to ready-to-record |
 | **Temp / Top-p / Min-p** knobs | Adjust sampling parameters live |
 | **Tokens** knob | Generation token budget (0–2048) |
@@ -186,30 +187,35 @@ Output = None** (it speaks OSC on UDP 11000/11001, not MIDI).
 python ableton_bridge.py m4l --checkpoint <path> --clip --track 0 --slot 0
 ```
 
-Clips are named `Output 1`, `Output 2`, … and end on a downbeat. Add `--clip-advance` to stack into the
-next empty slot, `--clip-tempo` to set Live's tempo to the generated tempo. The **prompt/input** for each
-generation is also written to the track **directly before** the output track (`clip_track - 1`), same
-slot — so you get the input and its continuation side by side (skipped if the output is on track 0).
-With native recording enabled (the default in clip mode), Ableton saves your live input once;
-the bridge leaves that recorded clip intact.
-In clip mode, Record mutes the existing output track while you play. Auto unmutes it and launches
-the generated clip when it is ready. With Auto off, the track stays muted until you press Play.
-Play unmutes the output track and launches the saved clip at the currently selected Slot, even
-after the temporary generation file is gone or while loop generation is running.
+Clips are named `Output 1`, `Output 2`, … and play once, ending on a downbeat. Aria searches from
+the selected Slot, wraps to the top, and uses the first empty slot. When the output track is full,
+it replaces slot 0. Add `--clip-tempo` to use the generated tempo as Live's tempo.
+
+Record captures your playing on the MIDI track directly before the output track while the current
+output clip keeps playing. Ableton saves the take in an empty slot on the input track. If that track
+is full, Aria still captures your input for generation. Auto queues the generated clip behind the
+one playing on the output track. With one-bar launch quantization and an aligned clip end, Aria
+can queue the launch for that downbeat. Otherwise it waits for Live to report the clip has stopped.
+If slot 0 needs to be replaced, Aria waits for playback in that slot to stop before writing.
+Play launches the saved clip at the currently selected Slot, including during generation.
 
 **Infinite loop** — seed once, then feed each output back as the next prompt, stacking clips down the
-column (you launch them in Ableton; Cancel stops):
+column (Cancel stops):
 
 ```bash
 python ableton_bridge.py m4l --checkpoint <path> --loop --track 0 --slot 0
 ```
 
-With **fire-on-write** on (`/aria/fire 1`), clips play sequentially — each fires after the previous ends
-(set Live's Global Launch Quantization to **1 Bar**).
+With **fire-on-write** on (`/aria/fire 1`), clips play in order. Set Live's Global Launch Quantization
+to **1 Bar** for downbeat handoffs. If the next clip is late, the current clip ends and playback
+waits for the next clip.
 Generation continues immediately from each finished output, independently of playback. Only the
 original live input is saved on the input track; generated continuations stack on the output track.
-The progress bar shows generation progress while waiting for playback, then time remaining for
-each playing clip/pass, including repeats while the next generation is still running.
+Each run uses the available slots and can replace slot 0 once after they fill.
+Press Record in the plug-in to start a new take during a run. Aria ends the previous generation
+chain and Live can keep playing its current clip while you record.
+The progress bar shows generation progress while waiting for playback and the time remaining
+while a clip plays.
 
 ---
 
@@ -278,13 +284,11 @@ python ableton_bridge.py [PRESET] [OPTIONS]
 | `--clip-host` | `127.0.0.1` | AbletonOSC host |
 | `--clip-port` | `11000` | AbletonOSC receive port |
 | `--clip-tempo` | off | Set Live's tempo to the generated tempo (plays exactly as generated; changes the global tempo) |
-| `--clip-advance` | off | If the target slot is occupied, write into the next empty slot below instead of overwriting |
-| `--measures-out` | `0` | Truncate the clip's loop to this many bars (0 = full; keeps all notes; ignored if ≥ the generated length) |
+| `--measures-out` | `0` | Limit clip playback to this many bars (0 = full length, all notes kept) |
 | `--no-clip-fire` | — | Don't auto-fire the clip after writing |
-| `--no-clip-replace` | — | Don't delete an existing clip in the slot first |
+| `--no-clip-replace` | — | Skip replacing slot 0 when the output track is full |
 | `--loop` | off | Infinite loop: feed each output back as the next prompt, stacking clips down the column (implies `--clip`). Record once to seed; Cancel stops |
 | `--loop-buffer` | `4` | Clips to keep ahead of the playing slot (currently free-run) |
-| `--loop-max-slot` | `7` | Bottom slot to stop at if Live's scene count is unavailable |
 
 **Feedback**
 

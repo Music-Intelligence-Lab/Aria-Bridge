@@ -553,16 +553,16 @@ def main():
     parser.add_argument("--clip-host", default="127.0.0.1", help="--clip: AbletonOSC host (default 127.0.0.1)")
     parser.add_argument("--clip-port", type=int, default=11000, help="--clip: AbletonOSC receive port (default 11000)")
     parser.add_argument("--no-clip-fire", action="store_true", help="--clip: do not auto-fire the clip after writing")
-    parser.add_argument("--no-clip-replace", action="store_true", help="--clip: do not delete an existing clip in the slot first")
+    parser.add_argument("--no-clip-replace", action="store_true", help="--clip: skip replacing slot 0 when the output track is full")
     parser.add_argument("--clip-tempo", action="store_true", help="--clip: set the Live Set tempo to the generated tempo (plays exactly as generated; changes global tempo)")
-    parser.add_argument("--clip-advance", action="store_true", help="--clip: if the target slot is occupied, write into the first empty slot below instead of overwriting")
+    parser.add_argument("--clip-advance", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--measures-out", type=int, default=0, help="--clip: truncate the clip's loop to this many bars (0 = full clip; keeps all notes, only shortens the loop)")
     # --- Infinite clip-loop: seed once (record), then feed each output back as the next
     #     prompt, stacking clips down the column. You launch clips in Ableton; Cancel stops.
     parser.add_argument("--loop", action="store_true", help="Infinite clip loop: feed each generated output back as the next prompt, writing clips down the column (implies --clip)")
     parser.add_argument("--loop-buffer", type=int, default=4, help="--loop: how many clips to keep generated ahead of the playing slot (default 4)")
-    parser.add_argument("--loop-max-slot", type=int, default=7, help="--loop: bottom slot to stop at if Live's scene count is unavailable (default 7)")
-    parser.add_argument("--record-clip", action="store_true", help="Force native Ableton clip recording on Record even without clip output. NOTE: this is already ON by default whenever clip output is enabled (--clip/--loop) — records your playing into a clip on track (--track - 1), same slot (one slot under if occupied). Needs AbletonOSC + the input track's MIDI-From set to your controller.")
+    parser.add_argument("--loop-max-slot", type=int, default=7, help=argparse.SUPPRESS)
+    parser.add_argument("--record-clip", action="store_true", help="Force native Ableton clip recording on Record even without clip output. Enabled by default with --clip or --loop. Records into an empty slot on track (--track - 1). Requires AbletonOSC and the input track routed from your controller.")
     parser.add_argument(
         "--osc-host",
         default="127.0.0.1",
@@ -817,16 +817,15 @@ def main():
                 # Loop defaults to hands-free (no auto-fire); single-clip keeps firing.
                 clip_fire=False if args.loop else (not args.no_clip_fire),
                 clip_set_tempo=args.clip_tempo,
-                clip_auto_advance=args.clip_advance,
                 clip_measures=args.measures_out,
                 loop_mode=args.loop,
                 loop_buffer=args.loop_buffer,
-                loop_max_slot=args.loop_max_slot,
                 record_clip=args.record_clip,
                 capture_dir=str(capture_dir) if capture_dir else None,
             )
             if osc:
                 osc.cancel_playback_cb = session.cancel_playback
+                osc.record_start_cb = session.interrupt_loop_for_recording
                 osc.generation_cancel_cb = session.generation_cancel_event.set
                 # If clip/loop was enabled on the CLI, the CLI is authoritative: don't wire
                 # the M4L /aria/clip toggle, so a default-off toggle (e.g. blasted by the

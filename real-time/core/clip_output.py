@@ -20,72 +20,12 @@ RECV_PORT = 11001
 NOTES_PER_MSG = 40  # keep each /live/clip/add/notes packet under the UDP limit
 
 
-def set_track_mute(host=DEFAULT_HOST, port=DEFAULT_PORT, track=0, muted=True):
-    """Set the output track's mute without opening an OSC reply listener."""
-    from pythonosc import udp_client
-    udp_client.SimpleUDPClient(host, port).send_message(
-        "/live/track/set/mute", [int(track), int(bool(muted))])
-
-
-def find_first_empty_slot(host, port, track, start_slot, recv_port=RECV_PORT,
-                          max_scan=128, timeout=0.4):
-    """Ask AbletonOSC for the first empty clip slot at/below ``start_slot``.
-
-    Returns that slot index, or ``start_slot`` if it can't be determined (e.g.
-    AbletonOSC not responding). Used to drop a new clip into the slot *under* an
-    existing one instead of overwriting it.
-    """
+def _query_empty_clip_slots(host, port, track, start_slot, recv_port=RECV_PORT):
+    osc = AbletonOSCClient(host, port, recv_port=recv_port)
     try:
-        from pythonosc import udp_client, dispatcher, osc_server
-        import threading
-        import time
-    except ImportError:
-        return start_slot
-
-    results = {}
-    lock = threading.Lock()
-
-    def _on_has_clip(addr, *a):
-        # AbletonOSC replies: track, slot, has_clip
-        if len(a) >= 3:
-            with lock:
-                results[(int(a[0]), int(a[1]))] = bool(a[2])
-
-    disp = dispatcher.Dispatcher()
-    disp.map("/live/clip_slot/has_clip", _on_has_clip)
-    try:
-        server = osc_server.ThreadingOSCUDPServer((host, recv_port), disp)
-    except Exception as e:
-        logger.warning(f"clip_output: cannot open reply listener on {recv_port}: {e}")
-        return start_slot
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    client = udp_client.SimpleUDPClient(host, port)
-
-    found = start_slot
-    try:
-        for slot in range(start_slot, start_slot + max_scan):
-            with lock:
-                results.pop((track, slot), None)
-            client.send_message("/live/clip_slot/has_clip", [track, slot])
-            deadline = time.time() + timeout
-            val = None
-            while time.time() < deadline:
-                with lock:
-                    if (track, slot) in results:
-                        val = results[(track, slot)]
-                        break
-                time.sleep(0.01)
-            if val is None:          # no reply -> can't tell; fall back
-                found = start_slot
-                break
-            if val is False:         # empty slot found
-                found = slot
-                break
-        else:
-            found = start_slot       # all scanned slots full
+        return osc.get_empty_clip_slots(track, start_slot)
     finally:
-        server.shutdown()
-    return found
+        osc.close()
 
 
 def query_tempo(host=DEFAULT_HOST, port=DEFAULT_PORT, recv_port=RECV_PORT, timeout=0.5):
@@ -133,13 +73,13 @@ def start_clip_record(host=DEFAULT_HOST, port=DEFAULT_PORT, track=0, slot=0,
     """Arm ``track`` and fire clip slot ``slot`` to begin native recording in Live.
 
     This is how Aria's Record button drives Ableton to record your live playing into
-    a clip (the bridge still buffers the same MIDI over ARIA_IN for the prompt). If
-    ``auto_advance`` and the target slot already holds a clip, the first empty slot
-    at/below it is used instead — so an existing take is never overwritten.
+    a clip (the bridge still buffers the same MIDI over ARIA_IN for the prompt).
+    With ``auto_advance``, search for an empty slot from the selected slot and
+    wrap to the top without overwriting a take.
 
     Requires the input track's MIDI-From to be set to the same controller as ARIA_IN
-    (arming only enables record; it doesn't route input). Returns the slot actually
-    used, or -1 if python-osc is unavailable.
+    (arming only enables record; it doesn't route input). Returns the slot used,
+    or -1 if recording could not be started.
     """
     try:
         from pythonosc import udp_client
@@ -148,7 +88,11 @@ def start_clip_record(host=DEFAULT_HOST, port=DEFAULT_PORT, track=0, slot=0,
         return -1
     used_slot = slot
     if auto_advance:
-        used_slot = find_first_empty_slot(host, port, track, slot)
+        empty_slots = _query_empty_clip_slots(host, port, track, slot, recv_port)
+        if not empty_slots:
+            logger.warning("No confirmed empty recording slot on Ableton track %s", track)
+            return -1
+        used_slot = empty_slots[0]
     client = udp_client.SimpleUDPClient(host, port)
     client.send_message("/live/track/set/arm", [int(track), 1])
     client.send_message("/live/clip_slot/fire", [int(track), int(used_slot)])
@@ -180,23 +124,21 @@ def stop_clip_record(host=DEFAULT_HOST, port=DEFAULT_PORT, track=0, disarm=True)
 
 
 def _clip_lengths(end_beat, bpb, measures_out):
-    """Return (clip_len, loop_len, play_len) in beats.
+    """Return the full clip length and its playable length in beats.
 
-    - clip_len: full clip — holds ALL notes, ending on the downbeat after the last note.
-    - loop_len: truncated loop length (``measures_out`` bars), or None if not truncating.
-    - play_len: what plays each pass (loop_len when truncating, else clip_len).
-
-    Truncation only kicks in when ``measures_out`` is SHORTER than the generated content —
-    it just shortens the loop region, keeping every note. If the knob is >= the generated
-    length (or 0), it's ignored and the clip is the full length rounded up to the last
-    note's bar (never padded with silence).
+    The full clip holds every note. A positive Measures setting can shorten
+    playback via the end marker without removing notes or padding the clip.
     """
     full_len = max(bpb, math.ceil(round(end_beat, 4) / bpb) * bpb)
     if measures_out and measures_out > 0:
-        loop_len = measures_out * bpb
-        if loop_len < full_len:
-            return full_len, loop_len, loop_len
-    return full_len, None, full_len
+        return full_len, min(full_len, measures_out * bpb)
+    return full_len, full_len
+
+
+def _set_one_shot(client, track, slot, clip_len, play_len):
+    client.send_message("/live/clip/set/looping", [track, slot, False])
+    if play_len < clip_len:
+        client.send_message("/live/clip/set/end_marker", [track, slot, float(play_len)])
 
 
 def extract_notes(midi_path):
@@ -256,7 +198,8 @@ class AbletonOSCClient:
         self.server = None
         try:
             self.server = osc_server.ThreadingOSCUDPServer((host, recv_port), disp)
-            threading.Thread(target=self.server.serve_forever, daemon=True).start()
+            threading.Thread(target=self.server.serve_forever,
+                             kwargs={"poll_interval": 0.05}, daemon=True).start()
         except Exception as e:
             logger.warning(f"AbletonOSCClient: no reply listener on {recv_port}: {e}")
 
@@ -281,23 +224,67 @@ class AbletonOSCClient:
         return None
 
     def get_playing_slot_index(self, track):
-        """Currently playing clip slot on the track, or -1 if none."""
+        """Return Live's playing slot index, or None if the reply is unavailable."""
         r = self.query("/live/track/get/playing_slot_index", [int(track)])
-        if r and len(r) >= 2:
+        if r and len(r) >= 2 and r[0] == int(track):
             try:
                 return int(r[-1])
             except (ValueError, TypeError):
-                return -1
-        return -1
-
-    def get_num_scenes(self):
-        r = self.query("/live/song/get/num_scenes", [])
-        if r:
-            try:
-                return int(r[-1])
-            except (ValueError, TypeError):
-                return None
+                pass
         return None
+
+    def can_launch_at_clip_end(self, track, slot, next_slot, beats_per_bar):
+        """Check whether a one-bar launch will land on the playing clip's end."""
+        quant = self.query("/live/clip/get/launch_quantization", [track, next_slot])
+        if not quant:
+            return False
+        if quant[-1] == 0:  # Global
+            global_quant = self.query("/live/song/get/clip_trigger_quantization", [])
+            if not global_quant or global_quant[-1] != 4:  # 1 Bar in the Song API
+                return False
+        elif quant[-1] != 5:  # 1 Bar in the Clip API
+            return False
+
+        args = [track, slot]
+        looping = self.query("/live/clip/get/looping", args)
+        if not looping or looping[-1] != 0:
+            return False
+        start = self.query("/live/clip/get/start_time", args)
+        end = self.query("/live/clip/get/end_marker", args)
+        numerator = self.query("/live/song/get/signature_numerator", [])
+        denominator = self.query("/live/song/get/signature_denominator", [])
+        now = self.query("/live/song/get/current_song_time", [])
+        if not all((start, end, numerator, denominator, now)):
+            return False
+        bar_length = 4 * numerator[-1] / denominator[-1]
+        end_time = start[-1] + end[-1]
+        end_bar = end_time / bar_length
+        return (bar_length == beats_per_bar
+                and math.isclose(end_bar, round(end_bar), rel_tol=0, abs_tol=1e-6)
+                and 0 < end_time - now[-1] < bar_length)
+
+    def wait_for_slot_release(self, track, slot, cancelled):
+        """Wait for the slot to stop playing before replacing its clip."""
+        import time
+
+        while not cancelled():
+            reply = self.query("/live/clip_slot/get/is_playing", [track, slot])
+            if not reply or reply[-1] not in (0, 1):
+                return False
+            if reply[-1] == 0:
+                return not cancelled()
+            time.sleep(0.05)
+        return False
+
+    def get_empty_clip_slots(self, track, start_slot):
+        """Return empty slots from the selected slot, wrapping to the top."""
+        r = self.query("/live/track/get/clips/length", [int(track)])
+        if not r or len(r) < 2 or r[0] != int(track):
+            return None
+        lengths = r[1:]
+        start = start_slot % len(lengths)
+        slots = range(len(lengths))
+        return [slot for slot in (*slots[start:], *slots[:start]) if lengths[slot] is None]
 
     def get_tempo(self):
         r = self.query("/live/song/get/tempo", [])
@@ -309,14 +296,14 @@ class AbletonOSCClient:
         return None
 
     def get_clip_is_playing(self, track, slot):
-        """True if the clip at (track, slot) is currently playing (not just triggered)."""
+        """Return whether the clip is playing, or None if the state is unknown."""
         r = self.query("/live/clip/get/is_playing", [int(track), int(slot)])
         if r:
             try:
                 return bool(int(r[-1]))
             except (ValueError, TypeError):
-                return False
-        return False
+                pass
+        return None
 
     def get_clip_playing_position(self, track, slot):
         """Current playback position of the clip at (track, slot), in beats. None if unknown."""
@@ -329,7 +316,7 @@ class AbletonOSCClient:
         return None
 
     def get_clip_loop_length(self, track, slot):
-        """Read the selected clip's loop region, in beats."""
+        """Read the clip's playback region, in beats, with or without Loop."""
         start = self.query("/live/clip/get/loop_start", [int(track), int(slot)])
         end = self.query("/live/clip/get/loop_end", [int(track), int(slot)])
         if start and end:
@@ -344,13 +331,12 @@ class AbletonOSCClient:
                    set_tempo=False, replace=True, fire=False, measures_out=0):
         """Write a .mid into (track, slot). Send-only (uses this client's socket).
 
-        If ``measures_out`` > 0, the loop is truncated to that many bars via loop_end
-        — all notes are kept, only the loop region is shortened. Returns
+        The clip plays once, up to ``measures_out`` bars if specified. Returns
         (n_notes, play_len_beats).
         """
         notes, end_beat, bpm = extract_notes(midi_path)
         bpb = beats_per_bar if beats_per_bar and beats_per_bar > 0 else 4
-        clip_len, loop_len, play_len = _clip_lengths(end_beat, bpb, measures_out)
+        clip_len, play_len = _clip_lengths(end_beat, bpb, measures_out)
         if set_tempo:
             self.client.send_message("/live/song/set/tempo", [float(bpm)])
         if replace:
@@ -364,9 +350,7 @@ class AbletonOSCClient:
             for (pitch, start, dur, vel, mute) in chunk:
                 flat += [int(pitch), float(start), float(dur), int(vel), int(mute)]
             self.client.send_message("/live/clip/add/notes", flat)
-        if loop_len:
-            self.client.send_message("/live/clip/set/loop_start", [track, slot, 0.0])
-            self.client.send_message("/live/clip/set/loop_end", [track, slot, float(loop_len)])
+        _set_one_shot(self.client, track, slot, clip_len, play_len)
         if fire:
             self.client.send_message("/live/clip/fire", [track, slot])
         return len(notes), play_len
@@ -382,11 +366,12 @@ class AbletonOSCClient:
 
 def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAULT_PORT,
                       replace=True, fire=True, beats_per_bar=4, set_tempo=False, name=None,
-                      auto_advance=False, measures_out=0):
+                      auto_advance=False, measures_out=0, cancelled=None):
     """Write the notes of ``midi_path`` into Ableton clip (track, slot) via AbletonOSC.
 
-    If ``auto_advance`` is True, an occupied target slot is skipped — the clip is
-    written into the first empty slot at/below ``slot`` instead of overwriting it.
+    If ``auto_advance`` is True, look for an empty slot starting at ``slot`` and
+    wrapping to the top. If every slot is occupied, replace slot 0 when allowed.
+    With a ``cancelled`` callback, wait for slot 0 to stop playing before replacing it.
 
     If ``set_tempo`` is True, the Live Set tempo is set to the file's tempo so the
     clip plays exactly as generated (a MIDI clip has no tempo of its own — it always
@@ -407,17 +392,31 @@ def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAUL
         return -1, slot
 
     bpb = beats_per_bar if beats_per_bar and beats_per_bar > 0 else 4
-    clip_len, loop_len, length_beats = _clip_lengths(end_beat, bpb, measures_out)
+    clip_len, length_beats = _clip_lengths(end_beat, bpb, measures_out)
 
-    # If asked, drop into the slot under an existing clip instead of overwriting.
     used_slot = slot
     if auto_advance:
-        used_slot = find_first_empty_slot(host, port, track, slot)
+        empty_slots = _query_empty_clip_slots(host, port, track, slot)
+        if empty_slots is None or (not empty_slots and not replace):
+            logger.warning("No writable clip slot confirmed on Ableton track %s", track)
+            return -1, slot
+        used_slot = empty_slots[0] if empty_slots else 0
+        replace = not empty_slots
+        if replace and cancelled is not None:
+            osc = AbletonOSCClient(host, port)
+            try:
+                if not osc.wait_for_slot_release(track, used_slot, cancelled):
+                    return -1, used_slot
+            finally:
+                osc.close()
+
+    if cancelled is not None and cancelled():
+        return -1, used_slot
 
     client = udp_client.SimpleUDPClient(host, port)
     if set_tempo:
         client.send_message("/live/song/set/tempo", [float(bpm)])
-    if replace and not auto_advance:
+    if replace:
         client.send_message("/live/clip_slot/delete_clip", [track, used_slot])
     client.send_message("/live/clip_slot/create_clip", [track, used_slot, float(clip_len)])
     if name:
@@ -428,10 +427,7 @@ def send_midi_to_clip(midi_path, track=0, slot=0, host=DEFAULT_HOST, port=DEFAUL
         for (pitch, start, dur, vel, mute) in chunk:
             flat += [int(pitch), float(start), float(dur), int(vel), int(mute)]
         client.send_message("/live/clip/add/notes", flat)
-    if loop_len:
-        # Truncate the loop to N bars (keeps all notes; shortens the loop region).
-        client.send_message("/live/clip/set/loop_start", [track, used_slot, 0.0])
-        client.send_message("/live/clip/set/loop_end", [track, used_slot, float(loop_len)])
+    _set_one_shot(client, track, used_slot, clip_len, length_beats)
     if fire:
         client.send_message("/live/clip/fire", [track, used_slot])
 
