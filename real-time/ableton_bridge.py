@@ -560,6 +560,8 @@ def main():
     # --- Infinite clip-loop: seed once (record), then feed each output back as the next
     #     prompt, stacking clips down the column. You launch clips in Ableton; Cancel stops.
     parser.add_argument("--loop", action="store_true", help="Infinite clip loop: feed each generated output back as the next prompt, writing clips down the column (implies --clip)")
+    parser.add_argument("--overdub", action="store_true",
+                        help="Layer each new take over Aria's last output clip (implies --clip). Cancel resets the chain.")
     parser.add_argument("--loop-buffer", type=int, default=4, help="--loop: how many clips to keep generated ahead of the playing slot (default 4)")
     parser.add_argument("--loop-max-slot", type=int, default=7, help=argparse.SUPPRESS)
     parser.add_argument("--record-clip", action="store_true", help="Force native Ableton clip recording on Record even without clip output. Enabled by default with --clip or --loop. Records into an empty slot on track (--track - 1). Requires AbletonOSC and the input track routed from your controller.")
@@ -620,6 +622,11 @@ def main():
         parser.set_defaults(**PRESETS[preset_name])
 
     args = parser.parse_args()
+
+    if args.overdub:
+        if args.mode != "manual" or args.capture or args.loop or args.variants != 1:
+            parser.error("--overdub requires manual generation with one output per take and without --loop")
+        args.clip = True
 
     _start_backend_tray()
 
@@ -818,6 +825,7 @@ def main():
                 clip_fire=False if args.loop else (not args.no_clip_fire),
                 clip_set_tempo=args.clip_tempo,
                 clip_measures=args.measures_out,
+                overdub=args.overdub,
                 loop_mode=args.loop,
                 loop_buffer=args.loop_buffer,
                 record_clip=args.record_clip,

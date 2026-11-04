@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import math
 import os
 import statistics
 import threading
@@ -16,11 +17,20 @@ import time
 import queue
 from typing import Iterable, List, Optional, Tuple
 from pathlib import Path
+from dataclasses import dataclass
 
 from core.midi_buffer import TimestampedMidiMsg
-from core.prompt_midi import buffer_to_tempfile_midi
+from core.prompt_midi import buffer_to_tempfile_midi, layer_clip_on_prompt
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _OverdubTake:
+    notes: list[tuple[int, float, float, int, int]]
+    length_beats: float
+    start_beat: float
+    bpm: float | None
 
 
 class _GenerationCanceled(Exception):
@@ -230,6 +240,7 @@ class ManualModeSession:
         record_clip: bool = False,
         variants: int = 1,
         capture_dir: Optional[str] = None,
+        overdub: bool = False,
     ):
         self.in_port_name = in_port_name
         self.out_port_name = out_port_name
@@ -279,6 +290,9 @@ class ManualModeSession:
         self.auto_play = False
         self.clip_set_tempo = clip_set_tempo
         self.clip_measures = clip_measures   # 0 = full clip; N = play up to N bars
+        self.overdub = overdub
+        self._overdub_outputs = {}
+        self._overdub_take: _OverdubTake | None = None
         self.loop_mode = loop_mode
         self.loop_buffer = loop_buffer
         # Native recording uses an empty slot on the track before the output track.
@@ -443,6 +457,12 @@ class ManualModeSession:
                     self.skip_pending_event.set()
                     if self.clip_output:
                         self.cancel_playback()
+                    if self.overdub:
+                        self._overdub_outputs.clear()
+                        self._overdub_take = None
+                        if self.session_state:
+                            self.session_state.set_record_level(0)
+                        self._log_ui("Overdub reset. The next take starts a new chain.")
                     self.recorded.clear()
                     self._log_ui("Canceled")
                     if self.session_state:
@@ -594,8 +614,12 @@ class ManualModeSession:
             self.pending_prompt_path = None
         if n >= 0:
             from core.clip_output import extract_notes, _clip_lengths
-            _, end_beat, _ = extract_notes(path)
+            notes, end_beat, _ = extract_notes(path)
             _, length_beats = _clip_lengths(end_beat, self.beats_per_bar or 4, self.clip_measures)
+            if self.overdub:
+                key = (output_track, used_slot)
+                self._overdub_outputs.pop(key, None)
+                self._overdub_outputs[key] = (notes, length_beats)
             if self.clip_fire:
                 self._clip_auto_q.put((output_track, used_slot, length_beats))
                 self._ensure_clip_monitor()
@@ -668,9 +692,12 @@ class ManualModeSession:
         self._note_on_count = 0
         self.skip_pending_event.clear()
         self.playback_cancel_event.clear()
+        if self.overdub:
+            self.start_time = time.monotonic()
         self.recording_flag.set()
         self._prepare_clip_recording()
-        self.start_time = time.monotonic()
+        if not self.overdub:
+            self.start_time = time.monotonic()
         logger.info(f"[manual] Recording started at {self.start_time:.3f}")
         self._log_ui("Recording started")
         if self.session_state:
@@ -678,7 +705,40 @@ class ManualModeSession:
             self.session_state.set_recording(True)
         if self.osc_status_cb:
             self.osc_status_cb("RECORDING")
+        if self.overdub and self.clip_output:
+            self._overdub_take = self._capture_overdub_take()
         self._start_native_clip_record()
+
+    def _capture_overdub_take(self):
+        """Select the backing and estimate its playhead at Record start."""
+        from core.clip_output import AbletonOSCClient
+
+        track = self.clip_track
+        backing = next((self._overdub_outputs[key] for key in reversed(self._overdub_outputs)
+                        if key[0] == track), None)
+        if backing is None:
+            return None
+        bpm = None
+        start_beat = 0.0
+        try:
+            osc = AbletonOSCClient(self.clip_host, self.clip_port)
+            try:
+                bpm = osc.get_tempo()
+                slot = osc.get_playing_slot_index(track)
+                playing = self._overdub_outputs.get((track, slot))
+                if playing is not None:
+                    backing = playing
+                    before = time.monotonic()
+                    position = osc.get_clip_playing_position(track, slot)
+                    if position is not None and bpm and self.start_time is not None:
+                        sampled_at = (before + time.monotonic()) / 2
+                        elapsed_beats = (sampled_at - self.start_time) * bpm / 60
+                        start_beat = max(0.0, position - elapsed_beats)
+            finally:
+                osc.close()
+        except Exception:
+            logger.exception("[overdub] Could not read Live's playhead")
+        return _OverdubTake(*backing, start_beat, bpm)
 
     def _prepare_clip_recording(self):
         if not self.clip_output:
@@ -822,6 +882,9 @@ class ManualModeSession:
 
     def set_loop_mode(self, on):
         on = bool(on)
+        if on and self.overdub:
+            self._log_ui("Infinite Loop is unavailable in Overdub. Record starts each next take.")
+            return
         if on and not self.clip_output:
             self._log_ui("Loop needs Clip ON — ignored")
             logger.info("[ctrl] loop-on ignored (clip output off)")
@@ -1455,6 +1518,9 @@ class ManualModeSession:
         """Stop, generate, and arm playback (prompting for 'p')."""
         self.recording_flag.clear()
         self._stop_native_clip_record()   # finalise the Ableton take before generating
+        overdub_take, self._overdub_take = self._overdub_take, None
+        if self.overdub and self.skip_pending_event.is_set():
+            self.recorded.clear()
         self.stop_time = time.monotonic()
         duration = (self.stop_time - self.start_time) if self.start_time else 0.0
         logger.info(f"[manual] Recording stopped at {self.stop_time:.3f} (duration={duration:.2f}s)")
@@ -1491,9 +1557,10 @@ class ManualModeSession:
                 self.osc_status_cb("IDLE")
             return
 
-        bpm = infer_bpm_from_onsets(self.recorded)
+        bpm = (overdub_take.bpm if overdub_take and overdub_take.bpm
+               else infer_bpm_from_onsets(self.recorded))
         if bpm:
-            logger.info(f"[manual] Estimated BPM from onsets: {bpm:.2f}")
+            logger.info(f"[manual] Recording BPM: {bpm:.2f}")
             if self.max_bars:
                 max_duration = (60.0 / bpm) * self.beats_per_bar * self.max_bars
                 if duration > max_duration:
@@ -1512,7 +1579,7 @@ class ManualModeSession:
         # input clip comes back stretched / off-beat. Changing the tempo here does not
         # change what Aria generates (the absolute-time performance is invariant); it only
         # fixes the beat grid used for the clip.
-        if self.clip_output:
+        if self.clip_output and not (overdub_take and overdub_take.bpm):
             try:
                 from core.clip_output import query_tempo
                 set_bpm = query_tempo(self.clip_host, self.clip_port)
@@ -1527,9 +1594,15 @@ class ManualModeSession:
             window_seconds=duration,
             current_bpm=bpm,
             ticks_per_beat=self.ticks_per_beat,
+            reference_time=self.start_time if overdub_take else None,
         )
 
+        if overdub_take:
+            layer_clip_on_prompt(prompt_midi_path, overdub_take.notes,
+                                 overdub_take.length_beats, overdub_take.start_beat)
         prompt_ticks, prompt_seconds = self._midi_stats(prompt_midi_path)
+        if overdub_take:
+            duration = max(duration, math.ceil(prompt_seconds))
         logger.info(
             f"[manual] Prompt stats: events={len(self.recorded)}, duration={duration:.2f}s, midi_len={prompt_seconds:.2f}s, ticks={prompt_ticks}"
         )
@@ -1555,6 +1628,7 @@ class ManualModeSession:
         generated_path = self._generate_once(prompt_midi_path, duration, temp, top_p, min_p, tokens)
         if generated_path is None:
             # canceled, timed out, or failed — return to record-ready
+            Path(prompt_midi_path).unlink(missing_ok=True)
             if self.session_state:
                 self.session_state.set_status("IDLE")
                 self.session_state.has_pending_output = False

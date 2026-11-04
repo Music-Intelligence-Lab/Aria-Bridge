@@ -134,6 +134,7 @@ def buffer_to_tempfile_midi(
     window_seconds: float = 4.0,
     current_bpm: float = None,
     ticks_per_beat: int = 480,
+    reference_time: float | None = None,
 ) -> str:
     """
     Convert buffer to a temporary MIDI file and return path.
@@ -146,6 +147,7 @@ def buffer_to_tempfile_midi(
         window_seconds: Time window to extract (default: 4.0s)
         current_bpm: Current BPM from tempo tracker (optional)
         ticks_per_beat: MIDI resolution (default: 480)
+        reference_time: Explicit take start, preserving time before the first note.
     
     Returns:
         Path to the temporary .mid file.
@@ -166,8 +168,7 @@ def buffer_to_tempfile_midi(
         if has_pulse:
             windowed_msgs = list(messages)
         else:
-            now = time.monotonic()
-            cutoff_time = now - window_seconds
+            cutoff_time = reference_time if reference_time is not None else time.monotonic() - window_seconds
             windowed_msgs = [msg for msg in messages if msg.timestamp >= cutoff_time]
 
         if not windowed_msgs:
@@ -217,7 +218,7 @@ def buffer_to_tempfile_midi(
                         last_tick = tick
 
             else:
-                first_timestamp = windowed_msgs[0].timestamp
+                first_timestamp = reference_time if reference_time is not None else windowed_msgs[0].timestamp
                 last_tick = 0
                 sorted_msgs = sorted(windowed_msgs, key=lambda m: m.timestamp)
                 seconds_per_beat = 60.0 / current_bpm if current_bpm else 0.5  # default 120 BPM
@@ -245,3 +246,30 @@ def buffer_to_tempfile_midi(
     tmp.close()
     mid.save(tmp.name)
     return tmp.name
+
+
+def layer_clip_on_prompt(midi_path, notes, clip_length_beats, take_start_beat):
+    """Overlay the take on the clip's audible region using the prompt's beat grid."""
+    midi = MidiFile(midi_path)
+    resolution = midi.ticks_per_beat
+    for message in midi.tracks[0]:
+        if not message.is_meta:
+            message.time += round(take_start_beat * resolution)
+            break
+
+    # Keep layers on separate MIDI tracks so overlapping pitches have independent note-offs.
+    events = []
+    for pitch, start, duration, velocity, muted in notes:
+        if muted or start >= clip_length_beats:
+            continue
+        on = round(start * resolution)
+        end = round(min(start + duration, clip_length_beats) * resolution)
+        events.append((on, Message("note_on", note=pitch, velocity=velocity)))
+        events.append((max(on + 1, end), Message("note_off", note=pitch)))
+
+    backing = midi.add_track()
+    previous_tick = 0
+    for tick, message in sorted(events, key=lambda event: (event[0], event[1].type != "note_off")):
+        backing.append(message.copy(time=tick - previous_tick))
+        previous_tick = tick
+    midi.save(midi_path)

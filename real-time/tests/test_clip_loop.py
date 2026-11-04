@@ -500,6 +500,81 @@ def test_record_starts_native_capture_on_input_track(monkeypatch, clip):
         record.assert_not_called()
 
 
+def test_overdub_layers_playing_output_and_cancel_resets_chain(monkeypatch, tmp_path):
+    import mido
+
+    now = [100.0]
+    monkeypatch.setattr(manual_mode.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(clip_output, "query_tempo", lambda *args: 120)
+    monkeypatch.setattr(clip_output, "start_clip_record", Mock(return_value=-1))
+    osc = Mock()
+    osc.get_tempo.return_value = 120
+    osc.get_clip_playing_position.return_value = 2.0
+    monkeypatch.setattr(clip_output, "AbletonOSCClient", Mock(return_value=osc))
+
+    commands = queue.Queue()
+    state = SessionState()
+    s = session(clip_output=True, overdub=True, clip_fire=False, clip_track=1,
+                clip_measures=2, command_queue=commands, session_state=state)
+    prompts = []
+    writes = []
+
+    def generate(path, duration, *args):
+        notes, _, _ = clip_output.extract_notes(path)
+        prompts.append([(pitch, start, length) for pitch, start, length, _, _ in notes])
+        index = len(prompts) - 1
+        midi = mido.MidiFile()
+        midi.add_track().extend([
+            mido.Message("note_on", note=70 + index, time=0),
+            mido.Message("note_off", note=70 + index, time=480),
+            mido.Message("note_on", note=75 + index, time=5 * 480),
+            mido.Message("note_off", note=75 + index, time=3 * 480),
+            mido.Message("note_on", note=80 + index, time=0),
+            mido.Message("note_off", note=80 + index, time=480),
+        ])
+        output = tmp_path / f"output-{index}.mid"
+        midi.save(output)
+        if index in (1, 2):
+            assert duration >= 4
+        return str(output)
+
+    def write(path, **kwargs):
+        writes.append(path)
+        return 3, len(writes) - 1
+
+    s._generate_once = generate
+    monkeypatch.setattr(clip_output, "send_midi_to_clip", write)
+
+    def take(pitch):
+        s._begin_recording()
+        s.recorded.extend([
+            TimestampedMidiMsg("note_on", note=pitch, velocity=80, timestamp=now[0] + 0.25),
+            TimestampedMidiMsg("note_off", note=pitch, timestamp=now[0] + 0.5),
+        ])
+        now[0] += 1
+        s._finish_recording_and_generate()
+
+    take(60)
+    osc.get_playing_slot_index.return_value = 0
+    take(61)
+    osc.get_playing_slot_index.return_value = 1
+    take(62)
+    state.set_record_level(1)
+    commands.put(("cancel", 1))
+    s._drain_commands()
+    assert state.get_snapshot()["last_record_level"] == 0
+    take(63)
+
+    assert prompts == [
+        [(60, 0.0, 0.5)],
+        [(70, 0.0, 1.0), (61, 2.5, 0.5), (75, 6.0, 2.0)],
+        [(71, 0.0, 1.0), (62, 2.5, 0.5), (76, 6.0, 2.0)],
+        [(63, 0.0, 0.5)],
+    ]
+    assert osc.get_clip_playing_position.call_args_list == [call(1, 0), call(1, 1)]
+    assert all(not Path(path).exists() for path in writes)
+
+
 @pytest.mark.parametrize("auto", [False, True])
 def test_writing_clip_only_auto_launches_and_play_uses_current_selection(monkeypatch, tmp_path, auto):
     path = tmp_path / "output.mid"

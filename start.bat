@@ -17,8 +17,8 @@ if not exist "%~dp0models\model-gen.safetensors" (
     exit /b 1
 )
 
-"%~dp0venv\Scripts\python.exe" real-time\ableton_bridge.py ^
+"%~dp0venv\Scripts\python.exe" "%~dp0real-time\ableton_bridge.py" ^
   plugin ^
   --feedback ^
   --checkpoint "%~dp0models\model-gen.safetensors" ^
-  --device "cuda"
+  --device "cuda" %*

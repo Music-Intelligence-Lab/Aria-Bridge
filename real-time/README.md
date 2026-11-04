@@ -218,6 +218,21 @@ chain and Live can keep playing its current clip while you record.
 The progress bar shows generation progress while waiting for playback and the time remaining
 while a clip plays.
 
+**Overdub** layers each new performance over an Aria clip and generates one new output per take.
+
+From the repo root on Windows, run `./start_overdub.bat`. It uses the same environment, model,
+and feedback settings as `start.bat`, with the second Ableton track as the default output.
+
+```bash
+python ableton_bridge.py plugin --checkpoint <path> --overdub --track 1
+```
+
+The first take uses your live MIDI. On later takes, Aria aligns your playing to the playhead of
+the Aria clip playing on the output track. If no Aria clip is playing, it layers the take from
+the start of the most recent output. Auto can launch each new output for you. Press **Cancel**
+once to clear the backing and start a new chain with your next take. Overdub enables Clip mode
+and uses Record to advance the chain.
+
 ---
 
 ## CLI Reference
@@ -289,6 +304,7 @@ python ableton_bridge.py [PRESET] [OPTIONS]
 | `--no-clip-fire` | — | Don't auto-fire the clip after writing |
 | `--no-clip-replace` | — | Skip replacing slot 0 when the output track is full |
 | `--loop` | off | Infinite loop: feed each output back as the next prompt, stacking clips down the column (implies `--clip`). Record once to seed; Cancel stops |
+| `--overdub` | off | Layer the live take over Aria's prior clip before generating. Implies `--clip` and is mutually exclusive with `--loop` |
 | `--loop-buffer` | `4` | Clips to keep ahead of the playing slot (currently free-run) |
 
 **Feedback**
