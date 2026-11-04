@@ -192,8 +192,9 @@ the selected Slot, wraps to the top, and uses the first empty slot. When the out
 it replaces slot 0. Add `--clip-tempo` to use the generated tempo as Live's tempo.
 
 Record captures your playing on the MIDI track directly before the output track while the current
-output clip keeps playing. Ableton saves the take in an empty slot on the input track. If that track
-is full, Aria still captures your input for generation. Auto queues the generated clip behind the
+output clip keeps playing. When you finish recording, Ableton saves the take stopped and leaves
+the input track armed so you can keep playing with Monitor set to Auto. If the input track is
+full, Aria still captures your input for generation. Auto queues the generated clip behind the
 one playing on the output track. With one-bar launch quantization and an aligned clip end, Aria
 can queue the launch for that downbeat. Otherwise it waits for Live to report the clip has stopped.
 If slot 0 needs to be replaced, Aria waits for playback in that slot to stop before writing.

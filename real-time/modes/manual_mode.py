@@ -792,13 +792,13 @@ class ManualModeSession:
             logger.exception("[record-clip] failed to start Ableton recording")
 
     def _stop_native_clip_record(self):
-        """Stop the in-progress native recording (finalises the take) and disarm."""
+        """Finalize the take and keep the input track armed in Clip mode."""
         if self._rec_input_track is None:
             return
         try:
             from core.clip_output import stop_clip_record
             stop_clip_record(host=self.clip_host, port=self.clip_port,
-                             track=self._rec_input_track)
+                             track=self._rec_input_track, disarm=not self.clip_output)
             self._log_ui(f"Ableton recording stopped -> track {self._rec_input_track} slot {self._rec_input_slot}")
         except Exception:
             logger.exception("[record-clip] failed to stop Ableton recording")

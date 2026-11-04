@@ -65,7 +65,7 @@ def test_loop_records_seed_once_and_generates_without_waiting(
     s._stop_native_clip_record()
     s._run_clip_loop(str(first), str(seed), 0.9, 0.95, None, 100)
     start_record.assert_called_once_with(host="127.0.0.1", port=11000, track=1, slot=0, auto_advance=True)
-    stop_record.assert_called_once()
+    stop_record.assert_called_once_with(host="127.0.0.1", port=11000, track=1, disarm=False)
     assert [(c.args[1], c.args[2]) for c in osc.write_clip.call_args_list] == [
         (2, slot) for slot in output_slots
     ]
