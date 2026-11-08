@@ -65,6 +65,7 @@ Pick the preset that matches your setup. Click for full instructions.
 | [**m4l**](#m4l) | OSC-controlled via Max for Live device | Ableton + Max for Live |
 | [**automatic**](#automatic) | Syncs to Ableton's MIDI clock, auto-generates at bar boundaries | Hands-free jamming |
 | [**manual**](#manual) | Keyboard-driven, no extras | Quick testing / no Ableton |
+| [**stream**](#stream) | Aria plays continuously and listens while you play (MLX only) | Duets, playing along |
 
 ---
 
@@ -169,6 +170,36 @@ python ableton_bridge.py manual --checkpoint <path-to-checkpoint>
 ```
 
 Keyboard-driven, no OSC. Press `r` to toggle recording, `p` to trigger playback.
+
+---
+
+### stream
+
+```bash
+python ableton_bridge.py stream --checkpoint <path> --device mlx --in <keyboard> --out ARIA_OUT
+```
+
+Continuous generation with a sliding context window. Record a seed phrase with the device; about 1 s
+after Record off Aria starts playing and keeps going. Whatever you play while it streams is merged into
+its context at the time you played it, so it answers you without turns. Cancel stops it, Play resumes.
+Each stream is saved as two-track MIDI (you, aria) in `data/streams/`, every 30 s and on stop.
+Apple Silicon only. Design, tests and options: [docs/STREAM_MODE.md](docs/STREAM_MODE.md).
+The set `ableton/Aria Duet.als` is set up for it.
+
+---
+
+## Control page (macOS)
+
+```bash
+python3 control/aria_control.py          # opens http://127.0.0.1:8765
+```
+
+A browser page that starts and stops the backend, so no terminal is needed during a session. Pick a mode
+(Duet = stream, Answer = m4l, Clip, Loop, Overdub), the keyboard, the output port and, for clip modes,
+the Ableton track by name (read through AbletonOSC). It also has Record, Play, Cancel and temperature,
+a live view of what the backend is doing, and the reason when it stops. The device keeps working
+alongside it. The log is written to `logs/aria_backend.log` at the repo root. It listens on 127.0.0.1 only.
+`--start duet` starts Aria right away.
 
 ---
 
@@ -438,6 +469,7 @@ real-time/
 │   └── TOKENS_AND_CLOCK.md # Tokens knob + clock-mode explainer
 ├── core/
 │   ├── aria_engine.py      # Model inference wrapper
+│   ├── stream_engine.py    # Sliding-window KV-cache generator (MLX)
 │   ├── bridge_engine.py    # Core orchestration (clock mode)
 │   ├── midi_buffer.py      # Rolling MIDI message buffer
 │   ├── prompt_midi.py      # Buffer-to-MIDI conversion
@@ -447,8 +479,12 @@ real-time/
 ├── modes/
 │   ├── clock_mode.py       # Pulse-based bar detection
 │   ├── manual_mode.py      # Keyboard-driven mode
+│   ├── stream_mode.py      # Continuous duet mode
 │   ├── osc_controller.py   # OSC server for M4L
 │   └── sampling_hotkeys.py # Live parameter tweaks
+├── control/
+│   ├── aria_control.py     # Control page server (start/stop, modes)
+│   └── index.html
 ├── ui/
 │   └── ui_panel.py         # Optional Tkinter UI
 ├── tools/
