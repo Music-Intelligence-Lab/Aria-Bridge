@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aria Monitor</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #1d242d;
+  --panel: #252e39;
+  --panel-2: #2c3644;
+  --rule: #3a4554;
+  --text: #e8ebef;
+  --text-2: #a9b3bf;
+  --text-3: #8592a1;
+  --rec: #f0555a;
+  --gen: #9a8cf8;
+  --ready: #e6ad2e;
+  --play: #45bd86;
+  --idle: #66717f;
+  --err: #ff7a6e;
+  --focus: #8fb8ff;
+  --display: "Avenir Next Condensed", "Avenir Next", "Arial Narrow", sans-serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #e9edf1; --panel: #ffffff; --panel-2: #f3f5f8; --rule: #d3d9e0;
+    --text: #1b222b; --text-2: #4f5965; --text-3: #6b7683;
+    --rec: #cf2e35; --gen: #5a48cc; --ready: #a87400; --play: #1d8550; --idle: #8a95a2;
+    --err: #c2352b; --focus: #2a63d6;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e9edf1; --panel: #ffffff; --panel-2: #f3f5f8; --rule: #d3d9e0;
+  --text: #1b222b; --text-2: #4f5965; --text-3: #6b7683;
+  --rec: #cf2e35; --gen: #5a48cc; --ready: #a87400; --play: #1d8550; --idle: #8a95a2;
+  --err: #c2352b; --focus: #2a63d6;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.wrap { max-width: 1400px; margin: 0 auto; padding: 16px 24px 32px; }
+.top { display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap; padding-bottom: 14px; border-bottom: 1px solid var(--rule); }
+.top h1 { font: 600 20px/1 var(--display); letter-spacing: .01em; margin: 0; }
+.backend { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); flex: none; }
+.backend.on .dot { background: var(--play); }
+.backend.off .dot { background: var(--err); }
+.logpath { color: var(--text-3); font-size: 12px; margin-left: auto; overflow-wrap: anywhere; }
+
+/* Start panel */
+.run { padding: 14px 0 12px; border-bottom: 1px solid var(--rule); }
+.modes { display: inline-flex; flex-wrap: wrap; background: var(--panel); border-radius: 8px; padding: 3px; margin-bottom: 10px; }
+.modes button { border: 0; background: transparent; color: var(--text-2); padding: 7px 15px; border-radius: 6px; cursor: pointer; font: 600 17px/1.1 var(--display); }
+.modes button[aria-checked="true"] { background: var(--panel-2); color: var(--text); }
+.modes button:disabled { cursor: not-allowed; opacity: .55; }
+.fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; }
+.fields label { display: grid; gap: 3px; color: var(--text-3); font-size: 12px; min-width: 170px; }
+.fields select, .fields input { background: var(--panel); color: var(--text); border: 1px solid var(--rule); border-radius: 7px; padding: 6px 8px; font-size: 14px; }
+.btn { border: 0; border-radius: 7px; padding: 8px 18px; cursor: pointer; font: 600 17px/1.1 var(--display); background: var(--panel-2); color: var(--text); }
+.btn.start { background: var(--play); color: #0d2a1d; }
+.btn.stop { background: var(--rec); color: #fff; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.quiet { background: transparent; color: var(--text-2); font: 13px/1 var(--sans); padding: 8px 6px; }
+.mode-desc { margin: 9px 0 0; color: var(--text-2); max-width: 78ch; min-height: 1.45em; }
+.form-err { margin: 6px 0 0; color: var(--err); min-height: 0; }
+.more { margin-top: 6px; color: var(--text-2); font-size: 13px; }
+.more .fields { margin-top: 8px; }
+.more .fields label { min-width: 130px; }
+
+/* Transport */
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 14px; }
+.btn.rec[aria-pressed="true"] { background: var(--rec); color: #fff; }
+.transport label { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 13px; margin-left: 8px; }
+.transport input[type=range] { width: 170px; accent-color: var(--gen); }
+
+/* The readout */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px 40px; align-items: end; padding: 28px 0 18px; }
+.state { display: flex; align-items: stretch; gap: 18px; min-width: 0; }
+.lamp { width: 10px; border-radius: 5px; background: var(--idle); flex: none; }
+.state[data-s="recording"] .lamp { background: var(--rec); animation: pulse 1.2s ease-in-out infinite; }
+.state[data-s="generating"] .lamp { background: var(--gen); }
+.state[data-s="ready"] .lamp { background: var(--ready); }
+.state[data-s="playing"] .lamp, .state[data-s="streaming"] .lamp { background: var(--play); }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .state .lamp { animation: none !important; } }
+.word { font: 600 clamp(56px, 9vw, 112px)/.9 var(--display); letter-spacing: -.01em; margin: 0; }
+.sub { color: var(--text-2); margin-top: 10px; font-size: 15px; min-height: 1.45em; }
+.bar { height: 6px; border-radius: 3px; background: var(--panel-2); margin-top: 14px; overflow: hidden; max-width: 640px; }
+.bar > i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--idle); transition: width .25s linear; }
+.state[data-s="generating"] ~ .bar > i, .bar.gen > i { background: var(--gen); }
+.bar.play > i { background: var(--play); }
+
+.params { display: grid; grid-template-columns: repeat(4, auto); gap: 10px 26px; margin: 0; }
+.params div { min-width: 64px; }
+.params dt { color: var(--text-3); font-size: 12px; }
+.params dd { margin: 2px 0 0; font: 600 24px/1 var(--display); font-variant-numeric: tabular-nums; }
+.params dd.dim { color: var(--text-3); font-weight: 500; }
+
+/* Signal path: each link in the chain, so a break is visible */
+.path { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; margin: 0 0 22px; border-radius: 8px; overflow: hidden; }
+.link { background: var(--panel); padding: 12px 14px; min-width: 0; }
+.link h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font: 600 17px/1.2 var(--display); }
+.link p { margin: 0; color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.link .dot { width: 10px; height: 10px; }
+.link.ok .dot { background: var(--play); }
+.link.bad .dot { background: var(--err); }
+.link.bad p { color: var(--err); }
+
+/* Session lane */
+.lane-wrap { margin: 6px 0 26px; }
+.lane-head { display: flex; justify-content: space-between; color: var(--text-3); font-size: 12px; margin-bottom: 6px; }
+.lane { position: relative; height: 34px; background: var(--panel); border-radius: 6px; overflow: hidden; }
+.lane .seg { position: absolute; top: 0; bottom: 0; }
+.lane .seg + .seg { box-shadow: inset 2px 0 0 var(--panel); }
+.seg.recording { background: var(--rec); }
+.seg.generating { background: var(--gen); }
+.seg.ready { background: var(--ready); }
+.seg.playing, .seg.streaming { background: var(--play); }
+.seg.idle { background: transparent; }
+.ticks { position: relative; height: 16px; color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ticks span { position: absolute; transform: translateX(-50%); top: 3px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+/* Lower half */
+.cols { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px; }
+section h2 { font: 600 18px/1.2 var(--display); margin: 0 0 10px; }
+.panel { background: var(--panel); border-radius: 8px; }
+
+.takes { list-style: none; margin: 0; padding: 4px 0; max-height: 62vh; overflow: auto; }
+.take { padding: 12px 16px; border-bottom: 1px solid var(--rule); }
+.take:last-child { border-bottom: 0; }
+.take-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.take-name { font: 600 17px/1.2 var(--display); }
+.take-time { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mini { display: flex; height: 8px; gap: 2px; margin: 8px 0 6px; border-radius: 4px; overflow: hidden; background: var(--panel-2); }
+.mini span:first-child { border-radius: 4px 0 0 4px; } .mini span:last-child { border-radius: 0 4px 4px 0; } .mini span:only-child { border-radius: 4px; }
+.mini span { display: block; height: 100%; }
+.mini .r { background: var(--rec); } .mini .g { background: var(--gen); } .mini .p { background: var(--play); }
+.facts { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--text-2); font-size: 13px; font-variant-numeric: tabular-nums; }
+.facts b { color: var(--text); font-weight: 600; }
+.outcome { margin-top: 6px; font-size: 13px; color: var(--text-2); }
+.outcome.bad { color: var(--err); }
+.empty { padding: 20px 16px; color: var(--text-2); }
+
+.log-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.seg-btns { display: inline-flex; background: var(--panel); border-radius: 7px; padding: 3px; }
+.seg-btns button { border: 0; background: transparent; padding: 5px 11px; border-radius: 5px; cursor: pointer; color: var(--text-2); }
+.seg-btns button[aria-pressed="true"] { background: var(--panel-2); color: var(--text); }
+.seg-btns .count { color: var(--err); margin-left: 4px; }
+.search { flex: 1; min-width: 140px; background: var(--panel); border: 1px solid var(--rule); border-radius: 7px; padding: 6px 10px; }
+.log { height: 62vh; overflow: auto; font: 12.5px/1.5 var(--mono); padding: 8px 0; }
+.row { display: grid; grid-template-columns: 64px 68px minmax(0, 1fr); gap: 10px; padding: 1px 14px 1px 12px; border-left: 3px solid transparent; }
+.row .t { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.row .src { color: var(--text-3); }
+.row .msg { white-space: pre-wrap; overflow-wrap: anywhere; }
+.row.warn { border-left-color: var(--ready); }
+.row.error { border-left-color: var(--err); }
+.row.error .msg { color: var(--err); }
+.row.marker .msg { color: var(--text); font-weight: 600; }
+.jump { position: sticky; bottom: 8px; margin-left: auto; margin-right: 12px; display: none; border: 0; border-radius: 6px; padding: 6px 12px; background: var(--panel-2); color: var(--text); cursor: pointer; }
+.jump.show { display: block; }
+.err-banner { display: none; margin: 14px 0 0; padding: 10px 14px; border-radius: 8px; background: var(--panel); border-left: 3px solid var(--err); }
+.err-banner.show { display: block; }
+.err-banner b { color: var(--err); }
+
+@media (max-width: 900px) {
+  .wrap { padding: 12px 16px 24px; }
+  .hero { grid-template-columns: 1fr; }
+  .params { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 14px; }
+  .path { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cols { grid-template-columns: 1fr; }
+  .log, .takes { height: auto; max-height: 60vh; }
+  .row { grid-template-columns: 58px minmax(0, 1fr); }
+  .row .src { display: none; }
+  .logpath { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Aria Bridge</h1>
+    <span class="backend" id="backend"><span class="dot"></span><span id="backendText">Connecting to the viewer…</span></span>
+    <span class="logpath" id="logpath"></span>
+  </header>
+
+  <section class="run" aria-label="Start Aria">
+    <div class="modes" id="modes" role="radiogroup" aria-label="How Aria runs"></div>
+    <div class="fields">
+      <label>Keyboard<select id="f-keys"></select></label>
+      <label>Aria plays to<select id="f-out"></select></label>
+      <label id="trackWrap">Clip track<select id="f-track"></select></label>
+      <button class="btn start" id="go">Start Aria</button>
+      <button class="btn quiet" id="refresh">Refresh ports</button>
+    </div>
+    <p class="mode-desc" id="modeDesc"></p>
+    <p class="form-err" id="formErr" role="alert"></p>
+    <details class="more" id="moreWrap"><summary>Duet options</summary>
+      <div class="fields">
+        <label>Context (tokens)<select id="f-window"><option>1024</option><option selected>2048</option><option>3072</option></select></label>
+        <label>Lookahead (s)<input id="f-look" type="number" min="1" max="8" step="0.5" value="3"></label>
+        <label>Repetition guard<input id="f-floor" type="number" min="0" max="2" step="0.1" value="0.8"></label>
+      </div>
+    </details>
+  </section>
+
+  <div class="err-banner" id="errBanner" role="alert"><b id="errTitle">Last error</b> <span id="errText"></span></div>
+
+  <div class="hero">
+    <div>
+      <div class="state" id="state" data-s="idle">
+        <span class="lamp" aria-hidden="true"></span>
+        <div>
+          <p class="word" id="word">Idle</p>
+          <div class="sub" id="sub">Waiting for the backend.</div>
+        </div>
+      </div>
+      <div class="bar" id="bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+      <div class="transport" aria-label="Transport">
+        <button class="btn rec" id="t-rec" aria-pressed="false">Record</button>
+        <button class="btn" id="t-play">Play</button>
+        <button class="btn" id="t-cancel">Cancel</button>
+        <label>Temperature <input id="t-temp" type="range" min="0.1" max="2" step="0.05" value="0.9"><span id="t-tempv">0.90</span></label>
+      </div>
+    </div>
+    <dl class="params" aria-label="Current settings">
+      <div><dt>Temperature</dt><dd id="p-temp" class="dim">–</dd></div>
+      <div><dt>Top p</dt><dd id="p-top_p" class="dim">–</dd></div>
+      <div><dt>Min p</dt><dd id="p-min_p" class="dim">–</dd></div>
+      <div><dt>Tokens</dt><dd id="p-tokens" class="dim">–</dd></div>
+      <div><dt>Clip output</dt><dd id="p-clip" class="dim">–</dd></div>
+      <div><dt>Loop</dt><dd id="p-loop" class="dim">–</dd></div>
+      <div><dt>Track</dt><dd id="p-track" class="dim">–</dd></div>
+      <div><dt>Slot</dt><dd id="p-slot" class="dim">–</dd></div>
+    </dl>
+  </div>
+
+  <div class="path" aria-label="Signal path">
+    <div class="link" id="l-device"><h3><span class="dot"></span>Device</h3><p></p></div>
+    <div class="link" id="l-keys"><h3><span class="dot"></span>Keyboard</h3><p></p></div>
+    <div class="link" id="l-model"><h3><span class="dot"></span>Model</h3><p></p></div>
+    <div class="link" id="l-live"><h3><span class="dot"></span>Ableton</h3><p></p></div>
+  </div>
+
+  <div class="lane-wrap">
+    <div class="lane-head"><span>Last 15 minutes</span>
+      <span class="legend"><span><i style="background:var(--rec)"></i>Recording</span><span><i style="background:var(--gen)"></i>Generating</span><span><i style="background:var(--ready)"></i>Ready to play</span><span><i style="background:var(--play)"></i>Playing</span></span>
+    </div>
+    <div class="lane" id="lane" aria-label="Session timeline"></div>
+    <div class="ticks" id="ticks"></div>
+  </div>
+
+  <div class="cols">
+    <section aria-labelledby="takesH">
+      <h2 id="takesH">Takes</h2>
+      <div class="panel"><ul class="takes" id="takes"><li class="empty">No takes yet. Press record on the device and play a phrase.</li></ul></div>
+    </section>
+    <section aria-labelledby="logH">
+      <h2 id="logH">Log</h2>
+      <div class="log-tools">
+        <div class="seg-btns" role="group" aria-label="Show">
+          <button data-f="all" aria-pressed="true">Everything</button>
+          <button data-f="problems" aria-pressed="false">Problems<span class="count" id="probCount"></span></button>
+          <button data-f="controls" aria-pressed="false">Controls</button>
+          <button data-f="model" aria-pressed="false">Model</button>
+        </div>
+        <input class="search" id="search" type="search" placeholder="Search the log" aria-label="Search the log">
+      </div>
+      <div class="panel log" id="log" tabindex="0" aria-label="Backend log"></div>
+      <button class="jump" id="jump">Jump to latest</button>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const WORD = { idle: "Idle", recording: "Recording", generating: "Generating", ready: "Ready to play", playing: "Playing", streaming: "Streaming", stopped: "Stopped" };
+const SRC = { "modes.osc_controller": "controls", "modes.manual_mode": "session", "core.aria_engine": "model",
+              "__main__": "bridge", "core.clip_output": "clips", "core.datastore": "dataset",
+              "modes.stream_mode": "stream", "core.stream_engine": "stream" };
+const MAX_ROWS = 3000, LANE_MS = 15 * 60 * 1000;
+let S, rows, filter = "all", query = "", follow = true, dirty = true;
+
+function reset() {
+  S = { state: "idle", since: Date.now(), segs: [], takes: [], params: {}, lastTs: null,
+        gen: null, play: null, model: "", ports: "", lastError: null, problems: 0, ready: false,
+        sig: null, keysAt: 0, outAt: 0, oscAt: 0, oscText: "", live: null, inPort: "", outPort: "", running: null, seed: 0 };
+  rows = [];
+  $("errBanner").classList.remove("show");
+  $("log").innerHTML = "";
+  dirty = true;
+}
+reset();
+
+function parseTime(line, arrival) {
+  const m = line.match(/^\[(?:INFO|WARNING|ERROR|DEBUG|CRITICAL) (\d\d):(\d\d):(\d\d)\]/);
+  if (!m) return null;
+  const d = new Date(arrival * 1000);
+  d.setHours(+m[1], +m[2], +m[3], 0);
+  let t = d.getTime();
+  if (t - arrival * 1000 > 6 * 3600e3) t -= 86400e3;  // line from before midnight
+  return t;
+}
+
+function setState(s, t) {
+  if (s === S.state) return;
+  const last = S.segs[S.segs.length - 1];
+  if (last && last.end == null) last.end = t;
+  S.segs.push({ s, start: t, end: null });
+  if (S.segs.length > 600) S.segs.shift();
+  S.state = s; S.since = t;
+  if (s !== "generating") S.gen = null;
+  if (s !== "playing") S.play = null;
+}
+
+const cur = () => S.takes[S.takes.length - 1];
+function setParam(k, v) { S.params[k] = v; }
+
+function handle(line, t) {
+  let m;
+  const take = cur();
+  if ((m = line.match(/\[OSC\] (.*)|Received (\/aria\/\S+ \S+)/))) {
+    S.oscAt = t;
+    const txt = (m[1] || m[2]).replace(/ <class.*$/, "");
+    if (!/^\/aria\/(record|play)/.test(txt) || !S.oscText) S.oscText = txt;
+    if (/^record=|^play/.test(txt)) S.oscText = txt;
+  }
+  if ((m = line.match(/^STATUS:signal:state=(\w+) in=(\d+) pedal=(\d+) last=(\w+) out=(\d+) seed=(\d+)/))) {
+    const prev = S.sig;
+    S.sig = { in: +m[2], pedal: +m[3], last: m[4], out: +m[5] };
+    S.seed = +m[6];
+    if (!prev || prev.in !== S.sig.in || prev.pedal !== S.sig.pedal) S.keysAt = t;
+    if (!prev || prev.out !== S.sig.out) S.outAt = t;
+  } else if ((m = line.match(/Stream mode ports opened: IN=(.*), OUT=(.*)/))) {
+    S.inPort = m[1].replace("IAC Driver ", ""); S.outPort = m[2].replace("IAC Driver ", "");
+    S.ports = `${S.inPort} in, ${S.outPort} out`;
+  } else if ((m = line.match(/Manual mode ports opened: IN=(.*), OUT=(.*)/))) {
+    S.inPort = m[1].replace("IAC Driver ", ""); S.outPort = m[2].replace("IAC Driver ", "");
+    S.ports = `${S.inPort} in, ${S.outPort} out`;
+  } else if ((m = line.match(/Streaming from a ([\d.]+) s seed \((\d+) notes\)/))) {
+    S.takes.push({ n: S.takes.length + 1, start: t, stream: true, rec: +m[1], seedNotes: +m[2] });
+  } else if ((m = line.match(/Saved (stream_\S+\.mid)/))) {
+    if (take) take.outcome = { text: `Saved as ${m[1]} in data/streams.` };
+  } else if ((m = line.match(/\[stream\] Ableton: '(.*)' hears (\S+)/))) {
+    S.live = { ok: true, text: `${m[1]} hears Aria` };
+  } else if ((m = line.match(/\[stream\] Ableton: no track is hearing (\S+)/))) {
+    S.live = { ok: false, text: `No track is hearing ${m[1]}. Aria will be silent.` };
+  } else if (/AbletonOSC did not answer|Could not reach AbletonOSC/.test(line)) {
+    S.live = { ok: false, text: "AbletonOSC did not answer. Is Live open?" };
+  } else if (/^STATUS:streaming$/.test(line)) {
+    setState("streaming", t);
+    S.stream = { started: t };
+  } else if ((m = line.match(/\[stream\] t=([\d.]+)s ahead=(-?[\d.]+)s entropy=([\d.-]+) temp\+([\d.]+) ctx=(\d+) tok\/s=(\d+) played=(\d+).*?merges=(\d+)(.*)$/))) {
+    if (S.state !== "streaming") setState("streaming", t);
+    S.stream = Object.assign(S.stream || {}, { ahead: +m[2], entropy: m[3], boost: +m[4], ctx: +m[5], rate: +m[6], played: +m[7], merges: +m[8], listening: /listening/.test(m[9]) });
+    const mem = m[9].match(/mem=([\d.]+)GB/);
+    if (mem) S.mem = +mem[1];
+    if (take && take.stream) { take.played = +m[7]; take.merges = +m[8]; take.streamed = true; }
+  } else if (/^STATUS:recording$/.test(line)) {
+    setState("recording", t);
+  } else if (/Stream stopped/.test(line)) {
+    setState("idle", t);
+  } else if (/Recording started/.test(line)) {
+    setState("recording", t);
+    S.takes.push({ n: S.takes.length + 1, start: t });
+  } else if ((m = line.match(/Recording stopped at [\d.]+ \(duration=([\d.]+)s\)/))) {
+    if (take) take.rec = +m[1];
+  } else if (/No MIDI captured/.test(line)) {
+    if (take) take.outcome = { text: "No notes reached ARIA_IN, so nothing was generated.", bad: true };
+    setState("idle", t);
+  } else if ((m = line.match(/Estimated BPM from onsets: ([\d.]+)/))) {
+    if (take) take.bpm = +m[1];
+  } else if ((m = line.match(/Prompt stats: events=(\d+)/))) {
+    if (take) take.events = +m[1];
+  } else if ((m = line.match(/\[GEN\] temp=([\d.]+) top_p=([\d.]+) min_p=([\d.]+)/))) {
+    setState("generating", t);
+    if (take) Object.assign(take, { temp: +m[1], top_p: +m[2], min_p: +m[3] });
+    setParam("temp", m[1]); setParam("top_p", m[2]); setParam("min_p", m[3]);
+  } else if ((m = line.match(/\[GEN\] max_new_tokens=(\d+)/))) {
+    if (take) take.tokens = +m[1];
+  } else if ((m = line.match(/Generating:\s+(\d+)%\|.*?\|\s*(\d+)\/(\d+)\s*\[[^,\]]*(?:,\s*([\d.]+)it\/s)?/))) {
+    if (S.state !== "generating") setState("generating", t);
+    S.gen = { pct: +m[1], n: +m[2], total: +m[3], rate: m[4] ? +m[4] : null };
+  } else if (/^STATUS:generating$/.test(line)) {
+    setState("generating", t);
+  } else if ((m = line.match(/Generation finished in ([\d.]+)s/))) {
+    if (take) take.gen = +m[1];
+    setState("ready", t);
+  } else if (/^STATUS:(generation_done|awaiting_play)/.test(line)) {
+    if (S.state === "generating") setState("ready", t);
+  } else if ((m = line.match(/Draft episode created: (\S+)/))) {
+    if (take) take.draft = m[1];
+  } else if ((m = line.match(/^STATUS:play_duration:([\d.]+)/))) {
+    setState("playing", t);
+    S.play = { pct: 0, dur: +m[1] };
+    if (take) take.out = +m[1];
+  } else if ((m = line.match(/^STATUS:playing:([\d.]+)/))) {
+    if (S.play) S.play.pct = +m[1];
+  } else if ((m = line.match(/Played pending MIDI \((\d+) msgs, ([\d.]+)s\)/))) {
+    if (take) { take.out = +m[2]; take.played = true; }
+    setState("idle", t);
+  } else if ((m = line.match(/Writing clip '([^']+)'/))) {
+    if (take) take.clip = m[1];
+  } else if ((m = line.match(/^STATUS:feedback:grade:(\d+)/))) {
+    if (take) take.grade = +m[1];
+  } else if (/^STATUS:feedback:commit/.test(line)) {
+    if (take) take.outcome = { text: `Saved to the dataset${take.grade ? `, grade ${take.grade}` : ""}.` };
+  } else if ((m = line.match(/Discarded un-graded draft (\S+)/))) {
+    const tk = S.takes.find(x => x.draft === m[1]);
+    if (tk) tk.outcome = { text: "Not graded, so it was discarded when the next take started." };
+  } else if (/\/aria\/cancel received|\] Canceled|"Canceled"/.test(line)) {
+    if (take && !take.outcome && !take.played) take.outcome = { text: "Canceled." };
+    setState("idle", t);
+  } else if (/^STATUS:ready$/.test(line)) {
+    S.ready = true; setState("idle", t);
+  } else if ((m = line.match(/^STATUS:param:(\w+):(.*)$/))) {
+    setParam(m[1], m[2]);
+  } else if ((m = line.match(/^STATUS:synced:(.*)$/))) {
+    for (const kv of m[1].split(/\s+/)) { const [k, v] = kv.split("="); if (k) setParam(k, v); }
+  } else if ((m = line.match(/Received \/aria\/(\w+): ([\w.]+)/))) {
+    setParam(m[1], m[2]);
+  } else if ((m = line.match(/AriaEngine initialized: (\w+) on (\w+)/))) {
+    S.model = `${m[1]} model on ${m[2].toUpperCase()}`;
+  } else if ((m = line.match(/Manual mode ports opened: IN=(.*), OUT=(.*)/))) {
+    S.ports = `${m[1].replace("IAC Driver ", "")} in, ${m[2].replace("IAC Driver ", "")} out`;
+  }
+  if ((m = line.match(/^STATUS:error:(.*)/))) { S.lastError = { text: m[1], t }; }
+}
+
+// startup warnings that are expected on this setup
+const BENIGN = /No OSC state received at startup|Sampling hotkeys disabled/;
+// noise: drives the bars, not the log
+const NOISE = /^STATUS:(playing|generating):[\d.]|^STATUS:signal:|^Generating:\s+\d+%|Record level unchanged/;
+
+function classify(line) {
+  let level = "info", src = "", msg = line, m;
+  if ((m = line.match(/^\[(INFO|WARNING|ERROR|DEBUG|CRITICAL) \d\d:\d\d:\d\d\] ([\w.]+): (.*)$/))) {
+    level = { WARNING: "warn", ERROR: "error", CRITICAL: "error" }[m[1]] || "info";
+    if (BENIGN.test(m[3])) level = "info";
+    src = SRC[m[2]] || m[2].split(".").pop();
+    msg = m[3].replace(/^\[(manual|MANUAL|OSC|loop|stream)\] /, "");
+  } else if (line.startsWith("STATUS:")) {
+    src = "status"; msg = line.slice(7).replace(/:/g, " ").replace(/_/g, " ");
+    if (line.startsWith("STATUS:error")) level = "error";
+  } else if (/^Traceback|^\s+File "|^\w+(Error|Exception):/.test(line)) {
+    level = "error"; src = "python";
+  } else {
+    src = "print";
+  }
+  const marker = /Recording started|Generation finished|Output ready|Played pending|Draft episode created|STATUS:ready$/.test(line);
+  const group = src === "controls" ? "controls" : (src === "model" || /\[GEN\]|Generat/.test(line)) ? "model" : "other";
+  return { level, src, msg, marker, group };
+}
+
+function fmtClock(t) { return t ? new Date(t).toLocaleTimeString([], { hour12: false }) : ""; }
+function fmtDur(s) {
+  if (s == null) return "";
+  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)} s`;
+  return `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
+}
+
+function ingest(batch) {
+  const frag = document.createDocumentFragment();
+  for (const line of batch.lines) {
+    const ts = parseTime(line, batch.t);
+    let t;
+    if (ts != null) t = ts;
+    else if (batch.live) t = batch.t * 1000;
+    else t = S.lastTs ?? batch.t * 1000;
+    if (ts != null) S.lastTs = ts; else if (batch.live) S.lastTs = t;
+    handle(line, t);
+    if (NOISE.test(line)) continue;
+    const c = classify(line);
+    if (c.level === "error") { S.problems++; S.lastError = S.lastError && S.lastError.t >= t ? S.lastError : { text: c.msg, t }; }
+    if (c.level === "warn") S.problems++;
+    const row = document.createElement("div");
+    row.className = `row ${c.level}${c.marker ? " marker" : ""}`;
+    row.dataset.group = c.group; row.dataset.level = c.level;
+    row.innerHTML = `<span class="t"></span><span class="src"></span><span class="msg"></span>`;
+    row.children[0].textContent = fmtClock(t);
+    row.children[1].textContent = c.src;
+    row.children[2].textContent = c.msg;
+    applyFilter(row);
+    frag.appendChild(row);
+  }
+  const log = $("log");
+  log.appendChild(frag);
+  while (log.childElementCount > MAX_ROWS) log.firstElementChild.remove();
+  if (follow) log.scrollTop = log.scrollHeight;
+  dirty = true;
+}
+
+function applyFilter(row) {
+  let show = filter === "all"
+    || (filter === "problems" && (row.dataset.level === "error" || row.dataset.level === "warn"))
+    || (filter === "controls" && row.dataset.group === "controls")
+    || (filter === "model" && row.dataset.group === "model");
+  if (show && query) show = row.textContent.toLowerCase().includes(query);
+  row.hidden = !show;
+}
+function refilter() { for (const r of $("log").children) applyFilter(r); $("log").scrollTop = $("log").scrollHeight; }
+
+function render() {
+  const now = Date.now();
+  const st = $("state");
+  const down = S.running === false;
+  st.dataset.s = down ? "stopped" : S.state;
+  $("word").textContent = down ? WORD.stopped : WORD[S.state];
+  const secs = Math.max(0, (now - S.since) / 1000);
+  let sub = "", pct = 0, cls = "";
+  if (S.state === "recording") sub = S.inPort
+    ? `Seed: ${S.seed} notes in ${fmtDur(secs)}. ${S.seed ? "Press record again to start Aria." : `Nothing from ${S.inPort} yet.`}`
+    : `Listening on ARIA_IN for ${fmtDur(secs)}. Press record again to generate.`;
+  else if (S.state === "generating") {
+    if (S.gen) { sub = `${S.gen.n} of ${S.gen.total} tokens${S.gen.rate ? `, ${Math.round(S.gen.rate)} per second` : ""}`; pct = S.gen.pct; }
+    else sub = `Starting, ${fmtDur(secs)} so far`;
+    cls = "gen";
+  } else if (S.state === "ready") sub = "Output is waiting. Press play on the device.";
+  else if (S.state === "streaming") {
+    const st = S.stream || {};
+    sub = st.ahead != null
+      ? `${st.listening ? "Listening to you. " : ""}${st.ahead.toFixed(1)} s ahead, entropy ${st.entropy}${st.boost ? `, temperature +${st.boost.toFixed(2)}` : ""}, ${st.played} notes played, ${st.merges} merges of your playing`
+      : "Starting the stream.";
+    pct = st.ahead != null ? Math.max(0, Math.min(100, st.ahead / 3 * 100)) : 0;
+    cls = "play";
+  }
+  else if (S.state === "playing") {
+    if (S.play) { pct = S.play.pct * 100; sub = `${fmtDur(S.play.pct * S.play.dur)} of ${fmtDur(S.play.dur)}, out ARIA_OUT`; }
+    cls = "play";
+  } else sub = S.ready ? [S.model, S.ports].filter(Boolean).join(", ") || "Ready for a take." : "Waiting for the backend.";
+  if (down) { sub = S.exit && S.exit.bad ? S.exit.text : "Choose a mode above and press Start Aria."; pct = 0; }
+  $("sub").textContent = sub;
+  const bar = $("bar");
+  bar.className = `bar ${cls}`;
+  bar.firstElementChild.style.width = `${pct}%`;
+  bar.setAttribute("aria-valuenow", Math.round(pct));
+
+  for (const k of ["temp", "top_p", "min_p", "tokens", "clip", "loop", "track", "slot"]) {
+    const el = $(`p-${k}`); let v = S.params[k];
+    if (v == null || v === "None") { el.textContent = k === "tokens" && v === "None" ? "auto" : "–"; el.className = "dim"; continue; }
+    if (k === "clip" || k === "loop") v = (v === "1" || v === "True" || v === "true") ? "On" : "Off";
+    else if (/^\d*\.\d+$/.test(v)) v = (+v).toFixed(2);
+    el.textContent = v; el.className = "";
+  }
+
+  // signal path
+  const setLink = (id, cls, text) => { const el = $(id); el.className = `link ${cls}`; el.lastElementChild.textContent = text; };
+  const ago = at => at ? fmtDur(Math.max(0, (now - at) / 1000)) + " ago" : "";
+  const NOTE = n => "C C# D Eb E F F# G Ab A Bb B".split(" ")[n % 12] + (Math.floor(n / 12) - 1);
+  const failed = down && S.exit && S.exit.bad;
+  if (down) setLink("l-device", failed ? "bad" : "", "Aria is not running, so the device has nothing to talk to.");
+  else if (S.oscAt) setLink("l-device", now - S.oscAt < 3000 ? "ok" : "", `${S.oscText}, ${ago(S.oscAt)}`);
+  else setLink("l-device", "", "Nothing from the device yet. Press Record, or Sync.");
+  if (S.sig) {
+    const hot = now - S.keysAt < 2000 && S.sig.in > 0;
+    const last = S.sig.last !== "None" ? `, last ${NOTE(+S.sig.last)}` : "";
+    setLink("l-keys", hot ? "ok" : "", S.sig.in
+      ? `${S.sig.in} notes, ${S.sig.pedal} pedal moves${last}, ${ago(S.keysAt)}`
+      : `Listening on ${S.inPort || "ARIA_IN"}. Nothing played yet.`);
+  } else setLink("l-keys", "", S.inPort ? `Listening on ${S.inPort}` : "No keyboard report from the backend in this mode.");
+  if (down) setLink("l-model", failed ? "bad" : "", "Not running.");
+  else if (!S.ready) setLink("l-model", "", "Loading the model.");
+  else setLink("l-model", "ok", [S.model || "Ready", S.mem ? `${S.mem} GB memory` : ""].filter(Boolean).join(", "));
+  if (S.live) setLink("l-live", S.live.ok ? (now - S.outAt < 2000 && S.sig && S.sig.out ? "ok" : "") : "bad",
+    S.sig && S.sig.out ? `${S.live.text}. ${S.sig.out} notes sent, ${ago(S.outAt)}.` : S.live.text);
+  else if (S.liveCheck) setLink("l-live", S.liveCheck.ok ? "" : "bad", S.liveCheck.text);
+  else setLink("l-live", "", "Not checked yet.");
+
+  // lane
+  const lane = $("lane"), t0 = now - LANE_MS;
+  let html = "";
+  for (const sg of S.segs) {
+    const end = sg.end ?? now;
+    if (end < t0 || sg.s === "idle") continue;
+    const a = Math.max(sg.start, t0), l = (a - t0) / LANE_MS * 100, w = Math.max(0.15, (end - a) / LANE_MS * 100);
+    html += `<span class="seg ${sg.s}" style="left:${l}%;width:${w}%" title="${WORD[sg.s]}, ${fmtDur((end - sg.start) / 1000)} at ${fmtClock(sg.start)}"></span>`;
+  }
+  lane.innerHTML = html;
+  let ticks = "";
+  for (let k = 15; k >= 0; k -= 3) {
+    const tf = k === 15 ? "translateX(0)" : k === 0 ? "translateX(-100%)" : "translateX(-50%)";
+    ticks += `<span style="left:${(15 - k) / 15 * 100}%;transform:${tf}">${k ? `−${k} min` : "now"}</span>`;
+  }
+  $("ticks").innerHTML = ticks;
+
+  // takes
+  const ul = $("takes");
+  if (S.takes.length) {
+    ul.innerHTML = "";
+    const tot = Math.max(1, ...S.takes.map(x => (x.rec || 0) + (x.gen || 0) + (x.out || 0)));
+    for (const tk of [...S.takes].reverse()) {
+      const li = document.createElement("li"); li.className = "take";
+      const facts = [];
+      if (tk.stream) {
+        facts.push(`<span>seed <b>${fmtDur(tk.rec)}</b></span>`, `<span>${tk.seedNotes} seed notes</span>`);
+        if (tk.played) facts.push(`<span>Aria played <b>${tk.played}</b> notes</span>`, `<span>${tk.merges} merges of your playing</span>`);
+      } else if (tk.rec != null) facts.push(`<span>played in <b>${fmtDur(tk.rec)}</b></span>`);
+      if (tk.gen != null) facts.push(`<span>generated in <b>${fmtDur(tk.gen)}</b></span>`);
+      if (tk.out != null) facts.push(`<span>output <b>${fmtDur(tk.out)}</b></span>`);
+      if (tk.bpm) facts.push(`<span>${Math.round(tk.bpm)} BPM</span>`);
+      if (tk.tokens) facts.push(`<span>${tk.tokens} tokens</span>`);
+      if (tk.temp != null) facts.push(`<span>temp ${tk.temp.toFixed(2)}</span>`);
+      if (tk.clip) facts.push(`<span>${tk.clip}</span>`);
+      let outcome = tk.outcome;
+      if (!outcome && tk.stream) outcome = { text: tk === cur() && S.state === "streaming" ? "Streaming now." : "" };
+      if (!outcome) {
+        if (tk === cur()) outcome = { text: { recording: "Recording now.", generating: "Generating now.", ready: "Waiting for play.", playing: "Playing now." }[S.state] || (tk.played ? "Played. Grade and commit on the device to keep it." : "") };
+        else outcome = { text: tk.played ? "Played." : "" };
+      }
+      li.innerHTML = `<div class="take-head"><span class="take-name">Take ${tk.n}</span><span class="take-time">${fmtClock(tk.start)}</span></div>
+        <div class="mini" aria-hidden="true">${tk.rec ? `<span class="r" style="width:${tk.rec / tot * 100}%"></span>` : ""}${tk.gen ? `<span class="g" style="width:${tk.gen / tot * 100}%"></span>` : ""}${tk.out ? `<span class="p" style="width:${tk.out / tot * 100}%"></span>` : ""}</div>
+        <div class="facts">${facts.join("")}</div>${outcome.text ? `<div class="outcome${outcome.bad ? " bad" : ""}"></div>` : ""}`;
+      if (outcome.text) li.querySelector(".outcome").textContent = outcome.text;
+      ul.appendChild(li);
+    }
+  }
+
+  $("probCount").textContent = S.problems ? ` ${S.problems}` : "";
+  const eb = $("errBanner");
+  if (down && S.exit && S.exit.bad) { eb.classList.add("show"); $("errTitle").textContent = "Aria stopped"; $("errText").textContent = S.exit.text; }
+  else if (S.lastError) { eb.classList.add("show"); $("errTitle").textContent = "Last error"; $("errText").textContent = `${fmtClock(S.lastError.t)}  ${S.lastError.text}`; }
+  else eb.classList.remove("show");
+  renderRun(down);
+  dirty = false;
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.addEventListener("reset", () => reset());
+  es.addEventListener("lines", e => ingest(JSON.parse(e.data)));
+  es.addEventListener("beat", e => beat(JSON.parse(e.data)));
+  es.onerror = () => { $("backend").className = "backend off"; $("backendText").textContent = "Viewer server not reachable. Is aria_control.py running?"; };
+}
+
+document.querySelectorAll(".seg-btns button").forEach(b => b.addEventListener("click", () => {
+  filter = b.dataset.f;
+  document.querySelectorAll(".seg-btns button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  refilter();
+}));
+$("search").addEventListener("input", e => { query = e.target.value.trim().toLowerCase(); refilter(); });
+$("log").addEventListener("scroll", () => {
+  const l = $("log");
+  follow = l.scrollHeight - l.scrollTop - l.clientHeight < 40;
+  $("jump").classList.toggle("show", !follow);
+});
+$("jump").addEventListener("click", () => { follow = true; $("log").scrollTop = $("log").scrollHeight; $("jump").classList.remove("show"); });
+
+function beat(b) {
+  const wasUp = S.running;
+  S.running = b.running;
+  S.exit = b.exit; S.liveCheck = b.live_check; S.runMode = b.mode; S.stopping = b.stopping;
+  if (wasUp && !b.running) { setState("idle", Date.now()); }
+  $("backend").className = `backend ${b.running ? "on" : "off"}`;
+  const label = (MODE[b.mode] && MODE[b.mode].label) || "";
+  $("backendText").textContent = b.stopping ? "Stopping…" : b.running ? `Aria running${label ? `: ${label}` : ""} (pid ${b.pid})` : "Aria is not running";
+  const path = b.log.replace(/^\/Users\/[^/]+/, "~");
+  $("logpath").textContent = b.exists ? path : `Waiting for ${path}. Start the backend with --launch, or pass --log.`;
+}
+
+// ---------- start panel ----------
+let MODE = {}, chosen = "duet", optionsLoaded = false;
+function fill(sel, items, val) {
+  const cur = sel.value;
+  sel.innerHTML = "";
+  for (const it of items) {
+    const o = document.createElement("option");
+    o.value = it.value; o.textContent = it.label;
+    sel.appendChild(o);
+  }
+  sel.value = items.some(i => i.value === cur) ? cur : val;
+}
+async function loadOptions() {
+  const d = await (await fetch("/api/options")).json();
+  MODE = Object.fromEntries(d.modes.map(m => [m.id, m]));
+  const box = $("modes");
+  box.innerHTML = "";
+  for (const m of d.modes) {
+    const b = document.createElement("button");
+    b.textContent = m.label; b.dataset.m = m.id; b.setAttribute("role", "radio");
+    b.addEventListener("click", () => { chosen = m.id; renderRun(S.running === false); });
+    box.appendChild(b);
+  }
+  fill($("f-keys"), d.inputs.map(p => ({ value: p, label: p.replace("IAC Driver ", "Ableton: ") })), d.defaults.keyboard);
+  fill($("f-out"), d.outputs.map(p => ({ value: p, label: p.replace("IAC Driver ", "Ableton: ") })), d.defaults.output);
+  fill($("f-track"), d.tracks.map(t => ({ value: String(t.index), label: t.name })), d.defaults.track == null ? "" : String(d.defaults.track));
+  optionsLoaded = true;
+  renderRun(S.running === false);
+}
+function renderRun(down) {
+  if (!optionsLoaded) return;
+  const active = down ? chosen : (MODE[S.runMode] ? S.runMode : chosen);
+  document.querySelectorAll("#modes button").forEach(b => {
+    b.setAttribute("aria-checked", String(b.dataset.m === active));
+    b.disabled = !down;
+  });
+  const m = MODE[active];
+  $("modeDesc").textContent = m ? m.desc + (down ? "" : " Stop Aria to change the mode.") : "";
+  $("trackWrap").hidden = !(m && m.clips);
+  $("moreWrap").hidden = active !== "duet";
+  for (const id of ["f-keys", "f-out", "f-track", "f-window", "f-look", "f-floor"]) $(id).disabled = !down;
+  const go = $("go");
+  go.textContent = S.stopping ? "Stopping…" : down ? "Start Aria" : "Stop Aria";
+  go.className = `btn ${down ? "start" : "stop"}`;
+  go.disabled = !!S.stopping;
+  $("t-rec").setAttribute("aria-pressed", String(S.state === "recording"));
+  for (const id of ["t-rec", "t-play", "t-cancel", "t-temp"]) $(id).disabled = down;
+}
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const d = await r.json().catch(() => ({}));
+  $("formErr").textContent = d.error || "";
+  return d;
+}
+$("go").addEventListener("click", () => {
+  if (S.running === false) {
+    post("/api/start", { mode: chosen, keyboard: $("f-keys").value, output: $("f-out").value,
+      track: $("f-track").value === "" ? null : +$("f-track").value, window: +$("f-window").value,
+      lookahead: +$("f-look").value, entropy_floor: +$("f-floor").value });
+  } else post("/api/stop");
+});
+$("refresh").addEventListener("click", loadOptions);
+const osc = (addr, value) => post("/api/osc", { addr, value });
+$("t-rec").addEventListener("click", () => osc("/aria/record", S.state === "recording" ? 0 : 1));
+$("t-play").addEventListener("click", () => osc("/aria/play", 1));
+$("t-cancel").addEventListener("click", () => osc("/aria/cancel", 1));
+$("t-temp").addEventListener("input", e => { $("t-tempv").textContent = (+e.target.value).toFixed(2); });
+$("t-temp").addEventListener("change", e => osc("/aria/temp", +e.target.value));
+
+const theme = new URLSearchParams(location.search).get("theme");
+if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+
+setInterval(() => render(), 500);
+loadOptions();
+if (location.search.includes("snapshot")) {
+  fetch("/snapshot").then(r => r.json()).then(d => { ingest(d); beat(d); render(); });
+} else {
+  connect();
+}
+render();
+</script>
+</body>
+</html>

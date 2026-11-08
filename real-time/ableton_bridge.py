@@ -44,6 +44,9 @@ PRESETS: dict = {
     # Capture: record raw playing to disk for training data — no model, no generation.
     # Same OSC record button as m4l/plugin; each take is saved as a .mid into --data-dir.
     "capture": {"mode": "manual", "m4l": True, "feedback": False, "capture": True},
+    # Stream: Aria plays continuously from a recorded seed and merges your live playing
+    # into its context as you play (same device controls). MLX only for now.
+    "stream": {"mode": "stream", "m4l": True, "feedback": False},
 }
 
 def _auto_detect_device() -> str:
@@ -392,7 +395,7 @@ def main():
         choices=list(PRESETS),
         default=None,
         metavar="PRESET",
-        help="Launch preset: plugin | m4l | automatic | manual. "
+        help="Launch preset: plugin | m4l | automatic | manual | capture | stream. "
              "Sets sensible defaults; individual flags still override.",
     )
     parser.add_argument(
@@ -504,7 +507,7 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["clock", "manual"],
+        choices=["clock", "manual", "stream"],
         default="clock",
         help="Bridge mode: 'clock' uses Ableton MIDI clock (default), 'manual' uses keyboard start/stop",
     )
@@ -615,6 +618,17 @@ def main():
              "--data-dir (default data/myplaying). No model is loaded and nothing is generated — "
              "for building a training corpus of your own playing. Use the 'capture' preset.",
     )
+    # --- Stream mode (preset 'stream'): continuous generation that listens while it plays.
+    parser.add_argument("--stream-window", type=int, default=2048,
+                        help="stream: context tokens kept in the model's cache (default 2048)")
+    parser.add_argument("--stream-lookahead", type=float, default=3.0,
+                        help="stream: seconds Aria generates ahead of the playhead (default 3.0)")
+    parser.add_argument("--stream-commit-ms", type=int, default=600,
+                        help="stream: Aria notes due within this many ms keep playing when you play (default 600)")
+    parser.add_argument("--stream-entropy-floor", type=float, default=0.8,
+                        help="stream: raise temperature while rolling entropy is below this, against loops (0 = off)")
+    parser.add_argument("--stream-dir", type=str, default=None,
+                        help="stream: folder to save each stream as a two-track MIDI (default <repo>/data/streams)")
 
     # Apply preset defaults before full parse so explicit flags can still override.
     preset_name = next((a for a in sys.argv[1:] if a in PRESETS), None)
@@ -863,6 +877,31 @@ def main():
                 rc = session.run()
                 hotkey_stop.set()
                 return rc
+
+        if args.mode == "stream":
+            try:
+                from modes.stream_mode import StreamSession
+            except ImportError:
+                from .modes.stream_mode import StreamSession
+            stream_dir = args.stream_dir or str(Path(__file__).resolve().parent.parent / "data" / "streams")
+            session = StreamSession(
+                in_port_name=args.in_port,
+                out_port_name=args.out_port,
+                aria_engine=engine,
+                sampling_state=sampling_state,
+                command_queue=cmd_queue,
+                session_state=session_state,
+                osc_status_cb=osc.send_status if osc else None,
+                osc_log_cb=osc.send_log if osc else None,
+                window=args.stream_window,
+                lookahead_s=args.stream_lookahead,
+                commit_ms=args.stream_commit_ms,
+                entropy_floor=args.stream_entropy_floor,
+                stream_dir=stream_dir,
+            )
+            rc = session.run()
+            hotkey_stop.set()
+            return rc
 
         # CLOCK MODE (existing behavior)
         buffer = RollingMidiBuffer(window_seconds=args.listen_seconds)
